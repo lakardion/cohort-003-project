@@ -14,4 +14,5 @@ await run({
   hooks: {
     onSandboxReady: [{ command: "pnpm install" }],
   },
+  completionSignal: "<promise>NO MORE TASKS</promise>",
 });
