@@ -13,19 +13,27 @@ import {
   getUserRatingForCourse,
   rateCourse,
 } from "~/services/ratingService";
+import {
+  createComment,
+  deleteComment,
+  getCourseComments,
+  updateComment,
+} from "~/services/commentService";
 import { parseFormData } from "~/lib/validation";
 import {
   StarRatingDisplay,
   StarRatingInput,
 } from "~/components/star-rating";
+import { CommentSection } from "~/components/comment-section";
 import { isUserEnrolled } from "~/services/enrollmentService";
+import { getUserById } from "~/services/userService";
 import {
   calculateProgress,
   getLessonProgressForCourse,
   getNextIncompleteLesson,
 } from "~/services/progressService";
 import { getCurrentUserId } from "~/lib/session";
-import { LessonProgressStatus } from "~/db/schema";
+import { LessonProgressStatus, UserRole } from "~/db/schema";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -119,6 +127,11 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     ? (getUserRatingForCourse(currentUserId, course.id)?.rating ?? null)
     : null;
 
+  const comments = getCourseComments(course.id);
+  const currentUserRole = currentUserId
+    ? (getUserById(currentUserId)?.role ?? null)
+    : null;
+
   return {
     course: courseWithDetails,
     salesCopyHtml,
@@ -132,6 +145,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     tierInfo,
     ratingSummary,
     userRating,
+    comments,
+    currentUserRole,
   };
 }
 
@@ -139,10 +154,23 @@ const rateCourseSchema = z.object({
   rating: z.coerce.number().int().min(1).max(5),
 });
 
+const createCommentSchema = z.object({
+  content: z.string().trim().min(1, "Comment cannot be empty"),
+  parentId: z.coerce.number().int().positive().optional(),
+});
+
+const updateCommentSchema = z.object({
+  commentId: z.coerce.number().int().positive(),
+  content: z.string().trim().min(1, "Comment cannot be empty"),
+});
+
+const deleteCommentSchema = z.object({
+  commentId: z.coerce.number().int().positive(),
+});
+
 // Enrollment is handled via the purchase confirmation page; this action
-// records star ratings. The `intent` form field selects which operation
-// to run — currently only "rate" is supported, but the switch makes room
-// for future intents.
+// records star ratings and handles course discussion comments. The `intent`
+// form field selects which operation to run.
 export async function action({ params, request }: Route.ActionArgs) {
   const currentUserId = await getCurrentUserId(request);
   if (!currentUserId) {
@@ -158,6 +186,67 @@ export async function action({ params, request }: Route.ActionArgs) {
   const intent = formData.get("intent");
 
   switch (intent) {
+    case "create-comment": {
+      // Enrolled students and any instructor may post; everyone else is read-only.
+      const canPost =
+        isUserEnrolled(currentUserId, course.id) ||
+        getUserById(currentUserId)?.role === UserRole.Instructor;
+      if (!canPost) {
+        return data(
+          { errors: { content: "You can't post in this discussion." } },
+          { status: 403 }
+        );
+      }
+      const parsed = parseFormData(formData, createCommentSchema);
+      if (!parsed.success) {
+        return data({ errors: parsed.errors }, { status: 400 });
+      }
+      try {
+        createComment(
+          currentUserId,
+          course.id,
+          parsed.data.content,
+          parsed.data.parentId
+        );
+      } catch (error) {
+        return data(
+          { errors: { content: (error as Error).message } },
+          { status: 400 }
+        );
+      }
+      return { success: true };
+    }
+
+    case "update-comment": {
+      const parsed = parseFormData(formData, updateCommentSchema);
+      if (!parsed.success) {
+        return data({ errors: parsed.errors }, { status: 400 });
+      }
+      try {
+        updateComment(parsed.data.commentId, currentUserId, parsed.data.content);
+      } catch (error) {
+        return data(
+          { errors: { content: (error as Error).message } },
+          { status: 400 }
+        );
+      }
+      return { success: true };
+    }
+
+    case "delete-comment": {
+      const parsed = parseFormData(formData, deleteCommentSchema);
+      if (!parsed.success) {
+        return data({ errors: parsed.errors }, { status: 400 });
+      }
+      const isCourseOwner = currentUserId === course.instructorId;
+      try {
+        deleteComment(parsed.data.commentId, currentUserId, isCourseOwner);
+      } catch (error) {
+        return data({ error: (error as Error).message }, { status: 403 });
+      }
+      return { success: true };
+    }
+
     case "rate":
     default: {
       // Only enrolled students may rate the course.
@@ -242,8 +331,13 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
     tierInfo,
     ratingSummary,
     userRating,
+    comments,
+    currentUserRole,
   } = loaderData;
   const isInstructor = currentUserId === course.instructorId;
+  // Enrolled students and any instructor may join the discussion; everyone
+  // else can read it but not post.
+  const canComment = enrolled || currentUserRole === UserRole.Instructor;
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
@@ -442,6 +536,15 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
               enrolled={enrolled}
               isInstructor={isInstructor}
               lessonProgressMap={lessonProgressMap}
+            />
+          </div>
+
+          <div className="mt-8">
+            <CommentSection
+              comments={comments}
+              courseInstructorId={course.instructorId}
+              currentUserId={currentUserId}
+              canPost={canComment}
             />
           </div>
         </div>
