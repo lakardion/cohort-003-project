@@ -4,6 +4,7 @@ import {
   integer,
   real,
   uniqueIndex,
+  type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 
 export enum UserRole {
@@ -272,6 +273,28 @@ export const courseRatings = sqliteTable(
     ),
   ]
 );
+
+export const courseComments = sqliteTable("course_comments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  courseId: integer("course_id")
+    .notNull()
+    .references(() => courses.id),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  // null = top-level comment; set = reply to a top-level comment.
+  // Replies are at most one level deep (no reply-to-reply); enforced in the service.
+  parentId: integer("parent_id").references(
+    (): AnySQLiteColumn => courseComments.id
+  ),
+  content: text("content").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
 
 export const videoWatchEvents = sqliteTable("video_watch_events", {
   id: integer("id").primaryKey({ autoIncrement: true }),
