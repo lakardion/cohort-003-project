@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useFetcher, useSearchParams } from "react-router";
+import { z } from "zod";
 import { toast } from "sonner";
 import type { Route } from "./+types/courses.$slug";
 import {
@@ -7,6 +8,16 @@ import {
   getCourseWithDetails,
   getLessonCountForCourse,
 } from "~/services/courseService";
+import {
+  getCourseRatingSummary,
+  getUserRatingForCourse,
+  rateCourse,
+} from "~/services/ratingService";
+import { parseFormData } from "~/lib/validation";
+import {
+  StarRatingDisplay,
+  StarRatingInput,
+} from "~/components/star-rating";
 import { isUserEnrolled } from "~/services/enrollmentService";
 import {
   calculateProgress,
@@ -33,6 +44,7 @@ import {
   Clock,
   Pencil,
   PlayCircle,
+  Star,
   Users,
 } from "lucide-react";
 import { CourseImage } from "~/components/course-image";
@@ -102,6 +114,11 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     : courseWithDetails.price;
   const tierInfo = getCountryTierInfo(country);
 
+  const ratingSummary = getCourseRatingSummary(course.id);
+  const userRating = currentUserId
+    ? (getUserRatingForCourse(currentUserId, course.id)?.rating ?? null)
+    : null;
+
   return {
     course: courseWithDetails,
     salesCopyHtml,
@@ -113,10 +130,52 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     currentUserId,
     pppPrice,
     tierInfo,
+    ratingSummary,
+    userRating,
   };
 }
 
-// No action — enrollment is handled via the purchase confirmation page
+const rateCourseSchema = z.object({
+  rating: z.coerce.number().int().min(1).max(5),
+});
+
+// Enrollment is handled via the purchase confirmation page; this action
+// records star ratings. The `intent` form field selects which operation
+// to run — currently only "rate" is supported, but the switch makes room
+// for future intents.
+export async function action({ params, request }: Route.ActionArgs) {
+  const currentUserId = await getCurrentUserId(request);
+  if (!currentUserId) {
+    throw data("Unauthorized", { status: 401 });
+  }
+
+  const course = getCourseBySlug(params.slug);
+  if (!course) {
+    throw data("Course not found", { status: 404 });
+  }
+
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  switch (intent) {
+    case "rate":
+    default: {
+      // Only enrolled students may rate the course.
+      if (!isUserEnrolled(currentUserId, course.id)) {
+        return data(
+          { errors: { rating: "Only enrolled students can rate this course." } },
+          { status: 403 }
+        );
+      }
+      const parsed = parseFormData(formData, rateCourseSchema);
+      if (!parsed.success) {
+        return data({ errors: parsed.errors }, { status: 400 });
+      }
+      rateCourse(currentUserId, course.id, parsed.data.rating);
+      return { success: true, rating: parsed.data.rating };
+    }
+  }
+}
 
 export function HydrateFallback() {
   return (
@@ -181,6 +240,8 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
     currentUserId,
     pppPrice,
     tierInfo,
+    ratingSummary,
+    userRating,
   } = loaderData;
   const isInstructor = currentUserId === course.instructorId;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -298,6 +359,26 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
             </Link>
           )}
         </div>
+        {/* Prominent average rating — grabs attention near the title */}
+        <div className="mb-4">
+          {ratingSummary.count > 0 ? (
+            <div className="inline-flex items-center gap-2 rounded-full bg-yellow-50 px-3 py-1.5 ring-1 ring-yellow-200 dark:bg-yellow-900/20 dark:ring-yellow-900/40">
+              <span className="text-xl font-bold tabular-nums text-yellow-700 dark:text-yellow-300">
+                {ratingSummary.average.toFixed(1)}
+              </span>
+              <Star className="size-5 fill-yellow-400 text-yellow-400" />
+              <span className="text-sm text-muted-foreground">
+                ({ratingSummary.count}{" "}
+                {ratingSummary.count === 1 ? "rating" : "ratings"})
+              </span>
+            </div>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Star className="size-4" />
+              No ratings yet
+            </span>
+          )}
+        </div>
         <p className="mb-4 text-lg text-muted-foreground">
           {course.description}
         </p>
@@ -346,6 +427,12 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
                 Join this course and start learning today.
               </p>
               {enrollButton}
+            </div>
+          )}
+
+          {enrolled && (
+            <div className="mt-8">
+              <RateCourseSection userRating={userRating} />
             </div>
           )}
 
@@ -585,6 +672,73 @@ function CourseContent({
         </div>
       )}
     </div>
+  );
+}
+
+function RateCourseSection({ userRating }: { userRating: number | null }) {
+  const fetcher = useFetcher<{ success?: boolean; rating?: number }>();
+  // Displayed rating is derived, not stored in state: while a submit is in
+  // flight we optimistically show its value, otherwise we trust the loader's
+  // saved rating. This keeps the stars in sync when the loader revalidates
+  // (e.g. switching users in the DevUI) instead of holding a stale value.
+  const inFlightRating = fetcher.formData
+    ? Number(fetcher.formData.get("rating"))
+    : null;
+  const displayRating = inFlightRating ?? userRating ?? 0;
+
+  function handleRate(rating: number) {
+    // Skip the request when re-clicking the already-saved rating.
+    if (rating === displayRating) return;
+    fetcher.submit(
+      { intent: "rate", rating: String(rating) },
+      { method: "post" }
+    );
+  }
+
+  const isSaving = fetcher.state !== "idle";
+  const savedRating = fetcher.data?.rating;
+  // Only celebrate when the fetcher's result matches the loader's current
+  // rating. After switching users the fetcher keeps its previous (now stale)
+  // data, so this guard prevents a leftover "Thanks!" with the wrong value.
+  const justSaved =
+    fetcher.state === "idle" &&
+    fetcher.data?.success === true &&
+    savedRating != null &&
+    savedRating === userRating;
+
+  return (
+    <section className="rounded-lg border bg-muted/30 p-6">
+      <h2 className="mb-1 text-xl font-bold">Rate this course</h2>
+      <p className="mb-4 text-sm text-muted-foreground">
+        {userRating
+          ? "You've rated this course. Pick a different star to update it."
+          : "Tap a star to share what you thought."}
+      </p>
+      <StarRatingInput
+        value={displayRating}
+        onRate={handleRate}
+        disabled={isSaving}
+      />
+      <div
+        className="mt-3 min-h-5 text-sm"
+        aria-live="polite"
+        role="status"
+      >
+        {isSaving ? (
+          <span className="text-muted-foreground">Saving your rating…</span>
+        ) : justSaved ? (
+          <span className="font-medium text-green-600 dark:text-green-400">
+            Thanks! You rated this course {savedRating}{" "}
+            {savedRating === 1 ? "star" : "stars"}.
+          </span>
+        ) : userRating ? (
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            Your rating:
+            <StarRatingDisplay value={userRating} size={16} />
+          </span>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
