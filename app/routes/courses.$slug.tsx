@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Link, useFetcher, useSearchParams } from "react-router";
-import { z } from "zod";
+import * as v from "valibot";
 import { toast } from "sonner";
 import type { Route } from "./+types/courses.$slug";
 import {
@@ -150,22 +150,49 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   };
 }
 
-const rateCourseSchema = z.object({
-  rating: z.coerce.number().int().min(1).max(5),
+const rateCourseSchema = v.object({
+  rating: v.pipe(
+    v.unknown(),
+    v.transform(Number),
+    v.number(),
+    v.integer(),
+    v.minValue(1),
+    v.maxValue(5)
+  ),
 });
 
-const createCommentSchema = z.object({
-  content: z.string().trim().min(1, "Comment cannot be empty"),
-  parentId: z.coerce.number().int().positive().optional(),
+const createCommentSchema = v.object({
+  content: v.pipe(v.string(), v.trim(), v.nonEmpty("Comment cannot be empty")),
+  parentId: v.optional(
+    v.pipe(
+      v.unknown(),
+      v.transform(Number),
+      v.number(),
+      v.integer(),
+      v.minValue(1)
+    )
+  ),
 });
 
-const updateCommentSchema = z.object({
-  commentId: z.coerce.number().int().positive(),
-  content: z.string().trim().min(1, "Comment cannot be empty"),
+const updateCommentSchema = v.object({
+  commentId: v.pipe(
+    v.unknown(),
+    v.transform(Number),
+    v.number(),
+    v.integer(),
+    v.minValue(1)
+  ),
+  content: v.pipe(v.string(), v.trim(), v.nonEmpty("Comment cannot be empty")),
 });
 
-const deleteCommentSchema = z.object({
-  commentId: z.coerce.number().int().positive(),
+const deleteCommentSchema = v.object({
+  commentId: v.pipe(
+    v.unknown(),
+    v.transform(Number),
+    v.number(),
+    v.integer(),
+    v.minValue(1)
+  ),
 });
 
 // Enrollment is handled via the purchase confirmation page; this action
