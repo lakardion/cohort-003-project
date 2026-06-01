@@ -1,12 +1,23 @@
 import { Link, data, isRouteErrorResponse } from "react-router";
 import type { Route } from "./+types/instructor.analytics";
 import { getCoursesByInstructor } from "~/services/courseService";
+import { getInstructorAnalyticsSummary } from "~/services/instructorAnalyticsService";
 import { getCurrentUserId } from "~/lib/session";
 import { getUserById } from "~/services/userService";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
-import { AlertTriangle, BarChart3, GraduationCap, Plus } from "lucide-react";
+import {
+  AlertTriangle,
+  Award,
+  BarChart3,
+  DollarSign,
+  GraduationCap,
+  Plus,
+  TrendingUp,
+  Users,
+} from "lucide-react";
+import { formatPrice } from "~/lib/utils";
 import { CourseStatus, UserRole } from "~/db/schema";
 
 export function meta() {
@@ -39,9 +50,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     });
   }
 
-  // Scoped to the signed-in instructor's own courses. Metric computation
-  // (summary cards, per-course breakdown, time-series) arrives in later slices;
-  // this slice establishes the route, auth, nav, and empty/loaded shell.
+  // All metrics are scoped to the signed-in instructor's own courses.
+  // The per-course breakdown table and time-series graphs arrive in later slices.
   const instructorCourses = getCoursesByInstructor(currentUserId);
 
   const courses = instructorCourses.map((course) => ({
@@ -51,7 +61,21 @@ export async function loader({ request }: Route.LoaderArgs) {
     status: course.status,
   }));
 
-  return { courses };
+  const summary = getInstructorAnalyticsSummary(currentUserId);
+
+  // Shape into an already-formatted, serialisable view object so the
+  // component stays presentational.
+  const summaryView = {
+    totalEnrollments: summary.totalEnrollments,
+    totalRevenue: formatPrice(summary.totalRevenue),
+    completionRate: `${Math.round(summary.completionRate)}%`,
+    completedEnrollments: summary.completedEnrollments,
+    averageQuizScore: `${Math.round(summary.averageQuizScore)}%`,
+    attemptCount: summary.attemptCount,
+    quizCount: summary.quizCount,
+  };
+
+  return { courses, summary: summaryView };
 }
 
 function statusBadge(status: string) {
@@ -102,10 +126,37 @@ export function HydrateFallback() {
   );
 }
 
+function StatCard({
+  label,
+  value,
+  sublabel,
+  icon,
+}: {
+  label: string;
+  value: string | number;
+  sublabel: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <h3 className="text-sm font-medium text-muted-foreground">{label}</h3>
+        <span className="text-muted-foreground" aria-hidden="true">
+          {icon}
+        </span>
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">{value}</div>
+        <p className="mt-1 text-xs text-muted-foreground">{sublabel}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function InstructorAnalytics({
   loaderData,
 }: Route.ComponentProps) {
-  const { courses } = loaderData;
+  const { courses, summary } = loaderData;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -144,26 +195,60 @@ export default function InstructorAnalytics({
           </Link>
         </div>
       ) : (
-        <section aria-label="Course analytics overview" className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Showing {courses.length}{" "}
-            {courses.length === 1 ? "course" : "courses"} you own. Detailed
-            metrics are on their way.
-          </p>
-          <ul className="space-y-2" aria-label="Your courses">
-            {courses.map((course) => (
-              <li key={course.id}>
-                <Link
-                  to={`/instructor/${course.id}`}
-                  className="flex items-center justify-between rounded-md border border-border p-4 transition-colors hover:bg-accent"
-                >
-                  <span className="font-medium">{course.title}</span>
-                  {statusBadge(course.status)}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <div className="space-y-8">
+          <section aria-label="Portfolio summary">
+            <h2 className="sr-only">Portfolio summary</h2>
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard
+                label="Total enrollments"
+                value={summary.totalEnrollments}
+                sublabel={`Across ${courses.length} ${
+                  courses.length === 1 ? "course" : "courses"
+                }`}
+                icon={<Users className="size-4" />}
+              />
+              <StatCard
+                label="Total revenue"
+                value={summary.totalRevenue}
+                sublabel="Sum of amounts paid (PPP-adjusted)"
+                icon={<DollarSign className="size-4" />}
+              />
+              <StatCard
+                label="Completion rate"
+                value={summary.completionRate}
+                sublabel={`${summary.completedEnrollments} of ${summary.totalEnrollments} enrollments completed`}
+                icon={<TrendingUp className="size-4" />}
+              />
+              <StatCard
+                label="Avg. quiz score"
+                value={summary.averageQuizScore}
+                sublabel={`${summary.attemptCount} ${
+                  summary.attemptCount === 1 ? "attempt" : "attempts"
+                } across ${summary.quizCount} ${
+                  summary.quizCount === 1 ? "quiz" : "quizzes"
+                }`}
+                icon={<Award className="size-4" />}
+              />
+            </div>
+          </section>
+
+          <section aria-label="Your courses">
+            <h2 className="mb-3 text-lg font-semibold">Your courses</h2>
+            <ul className="space-y-2">
+              {courses.map((course) => (
+                <li key={course.id}>
+                  <Link
+                    to={`/instructor/${course.id}`}
+                    className="flex items-center justify-between rounded-md border border-border p-4 transition-colors hover:bg-accent"
+                  >
+                    <span className="font-medium">{course.title}</span>
+                    {statusBadge(course.status)}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
       )}
     </div>
   );
