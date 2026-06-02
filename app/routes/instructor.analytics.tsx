@@ -1,12 +1,21 @@
 import { Link, data, isRouteErrorResponse } from "react-router";
 import type { Route } from "./+types/instructor.analytics";
 import { getCoursesByInstructor } from "~/services/courseService";
+import { getInstructorAnalyticsSummary } from "~/services/instructorAnalyticsService";
 import { getCurrentUserId } from "~/lib/session";
 import { getUserById } from "~/services/userService";
 import { UserRole } from "~/db/schema";
+import { formatPrice } from "~/lib/utils";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
-import { AlertTriangle, ChartColumn, GraduationCap } from "lucide-react";
+import {
+  AlertTriangle,
+  Award,
+  ChartColumn,
+  DollarSign,
+  GraduationCap,
+  Users,
+} from "lucide-react";
 
 export function meta() {
   return [
@@ -40,16 +49,51 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   // All analytics are scoped to courses the signed-in instructor owns.
   const ownedCourses = getCoursesByInstructor(currentUserId);
+  const summary = getInstructorAnalyticsSummary(currentUserId);
 
+  // Shape into a serialisable, already-formatted view object so the component
+  // stays presentational.
   return {
     courseCount: ownedCourses.length,
+    summary: {
+      totalEnrollments: summary.totalEnrollments,
+      totalRevenue: formatPrice(summary.totalRevenue),
+      completionRate: `${Math.round(summary.completionRate)}%`,
+      averageQuizScore: `${Math.round(summary.averageQuizScore)}%`,
+      attemptCount: summary.attemptCount,
+      distinctQuizCount: summary.distinctQuizCount,
+    },
   };
+}
+
+interface StatCardProps {
+  label: string;
+  value: string | number;
+  icon: React.ReactNode;
+  hint?: string;
+}
+
+function StatCard({ label, value, icon, hint }: StatCardProps) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          {icon}
+          {label}
+        </div>
+        <div className="text-3xl font-bold tracking-tight">{value}</div>
+        {hint ? (
+          <p className="text-xs text-muted-foreground">{hint}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function InstructorAnalytics({
   loaderData,
 }: Route.ComponentProps) {
-  const { courseCount } = loaderData;
+  const { courseCount, summary } = loaderData;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -88,12 +132,48 @@ export default function InstructorAnalytics({
         </Card>
       ) : (
         <div className="space-y-8">
-          {/* Summary stat cards, per-course breakdown, and time-series graphs
-              are filled in by subsequent slices (#15, #16, #17). */}
-          <p className="text-sm text-muted-foreground">
-            Analytics across {courseCount}{" "}
-            {courseCount === 1 ? "course" : "courses"} will appear here.
-          </p>
+          {/* Portfolio summary */}
+          <section aria-label="Portfolio summary">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard
+                label="Total enrollments"
+                value={summary.totalEnrollments}
+                icon={<Users className="size-4" />}
+                hint={`Across ${courseCount} ${
+                  courseCount === 1 ? "course" : "courses"
+                }`}
+              />
+              <StatCard
+                label="Total revenue"
+                value={summary.totalRevenue}
+                icon={<DollarSign className="size-4" />}
+                hint="Sum of amounts paid (PPP-adjusted)"
+              />
+              <StatCard
+                label="Completion rate"
+                value={summary.completionRate}
+                icon={<GraduationCap className="size-4" />}
+                hint="Enrolled students who finished"
+              />
+              <StatCard
+                label="Avg. quiz score"
+                value={summary.averageQuizScore}
+                icon={<Award className="size-4" />}
+                hint={
+                  summary.attemptCount === 0
+                    ? "No quiz attempts yet"
+                    : `${summary.attemptCount} ${
+                        summary.attemptCount === 1 ? "attempt" : "attempts"
+                      } across ${summary.distinctQuizCount} ${
+                        summary.distinctQuizCount === 1 ? "quiz" : "quizzes"
+                      }`
+                }
+              />
+            </div>
+          </section>
+
+          {/* Per-course breakdown (#16) and time-series graphs (#17) are filled
+              in by subsequent slices. */}
         </div>
       )}
     </div>
