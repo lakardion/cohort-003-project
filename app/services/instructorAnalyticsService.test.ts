@@ -12,7 +12,10 @@ vi.mock("~/db", () => ({
 }));
 
 // Import after mock so the module picks up our test db
-import { getInstructorAnalyticsSummary } from "./instructorAnalyticsService";
+import {
+  getInstructorAnalyticsSummary,
+  getPerCourseAnalytics,
+} from "./instructorAnalyticsService";
 
 // ─── Seeding helpers ───
 
@@ -245,6 +248,110 @@ describe("instructorAnalyticsService", () => {
       expect(summary.totalRevenue).toBe(2000);
       // No attempts on owned courses.
       expect(summary.attemptCount).toBe(0);
+    });
+  });
+
+  describe("getPerCourseAnalytics", () => {
+    it("returns an empty array when the instructor owns no courses", () => {
+      const lonely = createInstructor("Lonely", "lonely@example.com");
+      expect(getPerCourseAnalytics(lonely.id)).toEqual([]);
+    });
+
+    it("returns one row per owned course regardless of status", () => {
+      // base.course (published) + a draft and an archived course.
+      const draft = createCourse(
+        base.instructor.id,
+        "draft-course",
+        schema.CourseStatus.Draft
+      );
+      const archived = createCourse(
+        base.instructor.id,
+        "archived-course",
+        schema.CourseStatus.Archived
+      );
+
+      const rows = getPerCourseAnalytics(base.instructor.id);
+
+      expect(rows).toHaveLength(3);
+      const byId = new Map(rows.map((r) => [r.courseId, r]));
+      expect(byId.get(base.course.id)?.status).toBe(
+        schema.CourseStatus.Published
+      );
+      expect(byId.get(draft.id)?.status).toBe(schema.CourseStatus.Draft);
+      expect(byId.get(archived.id)?.status).toBe(
+        schema.CourseStatus.Archived
+      );
+    });
+
+    it("computes correct per-course figures across courses", () => {
+      const course2 = createCourse(base.instructor.id, "owned-2");
+
+      const s1 = createStudent("S1", "s1@example.com");
+      const s2 = createStudent("S2", "s2@example.com");
+      const s3 = createStudent("S3", "s3@example.com");
+
+      // Course 1: 2 enrollments (1 completed → 50%), revenue 4999.
+      enroll(s1.id, base.course.id, true);
+      enroll(s2.id, base.course.id, false);
+      purchase(s1.id, base.course.id, 4999);
+
+      // Course 2: 1 enrollment (completed → 100%), revenue 1500.
+      enroll(s3.id, course2.id, true);
+      purchase(s3.id, course2.id, 1500);
+
+      // Quiz on course 1: 2 attempts, scores 0.6 & 0.8 → 70%, 1 passed → 50%.
+      const quiz = createQuiz(base.course.id, "c1");
+      attempt(s1.id, quiz.id, 0.6, false);
+      attempt(s2.id, quiz.id, 0.8, true);
+
+      const rows = getPerCourseAnalytics(base.instructor.id);
+      const byId = new Map(rows.map((r) => [r.courseId, r]));
+
+      const c1 = byId.get(base.course.id)!;
+      expect(c1.totalEnrollments).toBe(2);
+      expect(c1.completionRate).toBe(50);
+      expect(c1.revenue).toBe(4999);
+      expect(c1.attemptCount).toBe(2);
+      expect(c1.distinctQuizCount).toBe(1);
+      expect(c1.averageQuizScore).toBeCloseTo(70, 5);
+      expect(c1.passRate).toBe(50);
+
+      const c2 = byId.get(course2.id)!;
+      expect(c2.totalEnrollments).toBe(1);
+      expect(c2.completionRate).toBe(100);
+      expect(c2.revenue).toBe(1500);
+      // No quizzes/attempts on course 2 → sensible zeros.
+      expect(c2.attemptCount).toBe(0);
+      expect(c2.averageQuizScore).toBe(0);
+      expect(c2.passRate).toBe(0);
+    });
+
+    it("returns sensible zeros for a course with no activity", () => {
+      const rows = getPerCourseAnalytics(base.instructor.id);
+      expect(rows).toHaveLength(1);
+      const row = rows[0];
+      expect(row.courseId).toBe(base.course.id);
+      expect(row.totalEnrollments).toBe(0);
+      expect(row.completionRate).toBe(0);
+      expect(row.revenue).toBe(0);
+      expect(row.averageQuizScore).toBe(0);
+      expect(row.passRate).toBe(0);
+      expect(row.attemptCount).toBe(0);
+      expect(row.distinctQuizCount).toBe(0);
+    });
+
+    it("never includes another instructor's course", () => {
+      const other = createInstructor("Other", "other@example.com");
+      const otherCourse = createCourse(other.id, "other-course");
+      const otherStudent = createStudent("OS", "os@example.com");
+      enroll(otherStudent.id, otherCourse.id, true);
+      purchase(otherStudent.id, otherCourse.id, 9999);
+
+      const rows = getPerCourseAnalytics(base.instructor.id);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].courseId).toBe(base.course.id);
+      expect(rows.some((r) => r.courseId === otherCourse.id)).toBe(false);
     });
   });
 });

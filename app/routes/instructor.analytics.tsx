@@ -1,10 +1,13 @@
 import { Link, data, isRouteErrorResponse } from "react-router";
 import type { Route } from "./+types/instructor.analytics";
 import { getCoursesByInstructor } from "~/services/courseService";
-import { getInstructorAnalyticsSummary } from "~/services/instructorAnalyticsService";
+import {
+  getInstructorAnalyticsSummary,
+  getPerCourseAnalytics,
+} from "~/services/instructorAnalyticsService";
 import { getCurrentUserId } from "~/lib/session";
 import { getUserById } from "~/services/userService";
-import { UserRole } from "~/db/schema";
+import { CourseStatus, UserRole } from "~/db/schema";
 import { formatPrice } from "~/lib/utils";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
@@ -50,6 +53,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   // All analytics are scoped to courses the signed-in instructor owns.
   const ownedCourses = getCoursesByInstructor(currentUserId);
   const summary = getInstructorAnalyticsSummary(currentUserId);
+  const perCourse = getPerCourseAnalytics(currentUserId);
 
   // Shape into a serialisable, already-formatted view object so the component
   // stays presentational.
@@ -63,7 +67,44 @@ export async function loader({ request }: Route.LoaderArgs) {
       attemptCount: summary.attemptCount,
       distinctQuizCount: summary.distinctQuizCount,
     },
+    perCourse: perCourse.map((c) => ({
+      courseId: c.courseId,
+      title: c.title,
+      status: c.status,
+      enrollments: c.totalEnrollments,
+      revenue: formatPrice(c.revenue),
+      completionRate: `${Math.round(c.completionRate)}%`,
+      averageQuizScore:
+        c.attemptCount === 0 ? "—" : `${Math.round(c.averageQuizScore)}%`,
+      passRate: c.attemptCount === 0 ? "—" : `${Math.round(c.passRate)}%`,
+      attemptCount: c.attemptCount,
+    })),
   };
+}
+
+function StatusBadge({ status }: { status: CourseStatus }) {
+  switch (status) {
+    case CourseStatus.Published:
+      return (
+        <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+          Published
+        </span>
+      );
+    case CourseStatus.Draft:
+      return (
+        <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+          Draft
+        </span>
+      );
+    case CourseStatus.Archived:
+      return (
+        <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-800 dark:bg-gray-900/30 dark:text-gray-400">
+          Archived
+        </span>
+      );
+    default:
+      return null;
+  }
 }
 
 interface StatCardProps {
@@ -93,7 +134,7 @@ function StatCard({ label, value, icon, hint }: StatCardProps) {
 export default function InstructorAnalytics({
   loaderData,
 }: Route.ComponentProps) {
-  const { courseCount, summary } = loaderData;
+  const { courseCount, summary, perCourse } = loaderData;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -172,8 +213,110 @@ export default function InstructorAnalytics({
             </div>
           </section>
 
-          {/* Per-course breakdown (#16) and time-series graphs (#17) are filled
-              in by subsequent slices. */}
+          {/* Per-course breakdown */}
+          <section aria-label="Per-course breakdown">
+            <h2 className="mb-3 text-lg font-semibold">Courses</h2>
+            <Card>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <caption className="sr-only">
+                      Per-course breakdown of enrollments, revenue, completion
+                      rate, and quiz performance
+                    </caption>
+                    <thead>
+                      <tr className="border-b border-border bg-muted/50">
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Course
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Enrollments
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Revenue
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Completion
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Avg. Quiz
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Pass Rate
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {perCourse.map((course) => (
+                        <tr
+                          key={course.courseId}
+                          className="border-b border-border last:border-0"
+                        >
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <Link
+                                to={`/instructor/${course.courseId}`}
+                                className="text-sm font-medium hover:text-primary hover:underline"
+                              >
+                                {course.title}
+                              </Link>
+                              <StatusBadge status={course.status} />
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            {course.enrollments}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            {course.revenue}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            {course.completionRate}
+                          </td>
+                          <td
+                            className="px-4 py-3 text-right text-sm"
+                            title={
+                              course.attemptCount === 0
+                                ? "No quiz attempts yet"
+                                : `${course.attemptCount} ${
+                                    course.attemptCount === 1
+                                      ? "attempt"
+                                      : "attempts"
+                                  }`
+                            }
+                          >
+                            {course.averageQuizScore}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            {course.passRate}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+
+          {/* Time-series graphs (#17) are filled in by a subsequent slice. */}
         </div>
       )}
     </div>
