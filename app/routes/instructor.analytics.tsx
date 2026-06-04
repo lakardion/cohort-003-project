@@ -4,7 +4,10 @@ import { getCoursesByInstructor } from "~/services/courseService";
 import {
   getInstructorAnalyticsSummary,
   getPerCourseAnalytics,
+  getEnrollmentsOverTime,
+  getRevenueOverTime,
 } from "~/services/instructorAnalyticsService";
+import { TimeSeriesChart } from "~/components/time-series-chart";
 import { getCurrentUserId } from "~/lib/session";
 import { getUserById } from "~/services/userService";
 import { CourseStatus, UserRole } from "~/db/schema";
@@ -54,6 +57,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   const ownedCourses = getCoursesByInstructor(currentUserId);
   const summary = getInstructorAnalyticsSummary(currentUserId);
   const perCourse = getPerCourseAnalytics(currentUserId);
+  const enrollmentsOverTime = getEnrollmentsOverTime(currentUserId);
+  const revenueOverTime = getRevenueOverTime(currentUserId);
 
   // Shape into a serialisable, already-formatted view object so the component
   // stays presentational.
@@ -79,7 +84,22 @@ export async function loader({ request }: Route.LoaderArgs) {
       passRate: c.attemptCount === 0 ? "—" : `${Math.round(c.passRate)}%`,
       attemptCount: c.attemptCount,
     })),
+    // Charts need numeric values to plot; keep cents/counts raw and format on
+    // the axis/tooltip in the chart component.
+    enrollmentsOverTime: enrollmentsOverTime.map((b) => ({
+      date: b.date,
+      value: b.count,
+    })),
+    revenueOverTime: revenueOverTime.map((b) => ({
+      date: b.date,
+      value: b.revenue,
+    })),
   };
+}
+
+/** Compact currency formatter for chart axes/tooltips (input is cents). */
+function formatRevenueAxis(cents: number): string {
+  return `$${Math.round(cents / 100).toLocaleString("en-US")}`;
 }
 
 function StatusBadge({ status }: { status: CourseStatus }) {
@@ -134,7 +154,8 @@ function StatCard({ label, value, icon, hint }: StatCardProps) {
 export default function InstructorAnalytics({
   loaderData,
 }: Route.ComponentProps) {
-  const { courseCount, summary, perCourse } = loaderData;
+  const { courseCount, summary, perCourse, enrollmentsOverTime, revenueOverTime } =
+    loaderData;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -316,7 +337,40 @@ export default function InstructorAnalytics({
             </Card>
           </section>
 
-          {/* Time-series graphs (#17) are filled in by a subsequent slice. */}
+          {/* Time-series graphs */}
+          <section aria-label="Trends over time">
+            <h2 className="mb-3 text-lg font-semibold">Over time</h2>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                    <Users className="size-4" />
+                    Enrollments over time
+                  </div>
+                  <TimeSeriesChart
+                    data={enrollmentsOverTime}
+                    label="Enrollments over time"
+                    seriesName="Enrollments"
+                  />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                    <DollarSign className="size-4" />
+                    Revenue over time
+                  </div>
+                  <TimeSeriesChart
+                    data={revenueOverTime}
+                    label="Revenue over time"
+                    seriesName="Revenue"
+                    formatValue={formatRevenueAxis}
+                    color="var(--color-chart-2, #22c55e)"
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          </section>
         </div>
       )}
     </div>

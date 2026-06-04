@@ -15,6 +15,8 @@ vi.mock("~/db", () => ({
 import {
   getInstructorAnalyticsSummary,
   getPerCourseAnalytics,
+  getEnrollmentsOverTime,
+  getRevenueOverTime,
 } from "./instructorAnalyticsService";
 
 // ─── Seeding helpers ───
@@ -70,6 +72,29 @@ function purchase(userId: number, courseId: number, pricePaid: number) {
   return testDb
     .insert(schema.purchases)
     .values({ userId, courseId, pricePaid, country: null })
+    .returning()
+    .get();
+}
+
+/** Enroll with an explicit enrolledAt timestamp (ISO string). */
+function enrollAt(userId: number, courseId: number, enrolledAt: string) {
+  return testDb
+    .insert(schema.enrollments)
+    .values({ userId, courseId, enrolledAt, completedAt: null })
+    .returning()
+    .get();
+}
+
+/** Purchase with an explicit createdAt timestamp (ISO string). */
+function purchaseAt(
+  userId: number,
+  courseId: number,
+  pricePaid: number,
+  createdAt: string
+) {
+  return testDb
+    .insert(schema.purchases)
+    .values({ userId, courseId, pricePaid, country: null, createdAt })
     .returning()
     .get();
 }
@@ -352,6 +377,98 @@ describe("instructorAnalyticsService", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].courseId).toBe(base.course.id);
       expect(rows.some((r) => r.courseId === otherCourse.id)).toBe(false);
+    });
+  });
+
+  describe("getEnrollmentsOverTime", () => {
+    it("returns an empty array when there are no courses or enrollments", () => {
+      const lonely = createInstructor("Lonely", "lonely@example.com");
+      expect(getEnrollmentsOverTime(lonely.id)).toEqual([]);
+      // Owns a course but no enrollments yet.
+      expect(getEnrollmentsOverTime(base.instructor.id)).toEqual([]);
+    });
+
+    it("buckets enrollments by day across owned courses, ordered chronologically", () => {
+      const course2 = createCourse(base.instructor.id, "owned-2");
+      const s1 = createStudent("S1", "s1@example.com");
+      const s2 = createStudent("S2", "s2@example.com");
+      const s3 = createStudent("S3", "s3@example.com");
+
+      // 2 on 2026-01-01 (across two courses), 1 on 2026-01-03.
+      enrollAt(s1.id, base.course.id, "2026-01-01T08:00:00.000Z");
+      enrollAt(s2.id, course2.id, "2026-01-01T20:00:00.000Z");
+      enrollAt(s3.id, base.course.id, "2026-01-03T10:00:00.000Z");
+
+      const series = getEnrollmentsOverTime(base.instructor.id);
+
+      expect(series).toEqual([
+        { date: "2026-01-01", count: 2 },
+        { date: "2026-01-03", count: 1 },
+      ]);
+    });
+
+    it("degrades to a single bucket with sparse data", () => {
+      const s1 = createStudent("S1", "s1@example.com");
+      enrollAt(s1.id, base.course.id, "2026-02-15T12:00:00.000Z");
+
+      expect(getEnrollmentsOverTime(base.instructor.id)).toEqual([
+        { date: "2026-02-15", count: 1 },
+      ]);
+    });
+
+    it("never counts another instructor's enrollments", () => {
+      const other = createInstructor("Other", "other@example.com");
+      const otherCourse = createCourse(other.id, "other-course");
+      const otherStudent = createStudent("OS", "os@example.com");
+      enrollAt(otherStudent.id, otherCourse.id, "2026-01-01T00:00:00.000Z");
+
+      const mine = createStudent("Mine", "mine@example.com");
+      enrollAt(mine.id, base.course.id, "2026-01-01T00:00:00.000Z");
+
+      expect(getEnrollmentsOverTime(base.instructor.id)).toEqual([
+        { date: "2026-01-01", count: 1 },
+      ]);
+    });
+  });
+
+  describe("getRevenueOverTime", () => {
+    it("returns an empty array when there are no courses or purchases", () => {
+      const lonely = createInstructor("Lonely", "lonely@example.com");
+      expect(getRevenueOverTime(lonely.id)).toEqual([]);
+      expect(getRevenueOverTime(base.instructor.id)).toEqual([]);
+    });
+
+    it("buckets summed revenue by day across owned courses, ordered chronologically", () => {
+      const course2 = createCourse(base.instructor.id, "owned-2");
+      const s1 = createStudent("S1", "s1@example.com");
+      const s2 = createStudent("S2", "s2@example.com");
+      const s3 = createStudent("S3", "s3@example.com");
+
+      // 2026-01-01: 4999 + 1500 = 6499; 2026-01-05: 2000.
+      purchaseAt(s1.id, base.course.id, 4999, "2026-01-01T08:00:00.000Z");
+      purchaseAt(s2.id, course2.id, 1500, "2026-01-01T22:00:00.000Z");
+      purchaseAt(s3.id, base.course.id, 2000, "2026-01-05T10:00:00.000Z");
+
+      const series = getRevenueOverTime(base.instructor.id);
+
+      expect(series).toEqual([
+        { date: "2026-01-01", revenue: 6499 },
+        { date: "2026-01-05", revenue: 2000 },
+      ]);
+    });
+
+    it("never counts another instructor's revenue", () => {
+      const other = createInstructor("Other", "other@example.com");
+      const otherCourse = createCourse(other.id, "other-course");
+      const otherStudent = createStudent("OS", "os@example.com");
+      purchaseAt(otherStudent.id, otherCourse.id, 9999, "2026-01-01T00:00:00.000Z");
+
+      const mine = createStudent("Mine", "mine@example.com");
+      purchaseAt(mine.id, base.course.id, 2000, "2026-01-01T00:00:00.000Z");
+
+      expect(getRevenueOverTime(base.instructor.id)).toEqual([
+        { date: "2026-01-01", revenue: 2000 },
+      ]);
     });
   });
 });

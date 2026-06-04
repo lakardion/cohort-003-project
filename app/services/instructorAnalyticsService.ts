@@ -250,3 +250,62 @@ export function getPerCourseAnalytics(
     };
   });
 }
+
+export interface EnrollmentBucket {
+  /** Day bucket as an ISO date string (YYYY-MM-DD). */
+  date: string;
+  count: number;
+}
+
+export interface RevenueBucket {
+  /** Day bucket as an ISO date string (YYYY-MM-DD). */
+  date: string;
+  /** Sum of `pricePaid` for the bucket, in integer cents. */
+  revenue: number;
+}
+
+/**
+ * Enrollment counts bucketed by day across the instructor's owned courses,
+ * ordered chronologically. Returns an empty array when there are no owned
+ * courses or no enrollments.
+ */
+export function getEnrollmentsOverTime(instructorId: number): EnrollmentBucket[] {
+  const courseIds = getOwnedCourseIds(instructorId);
+  if (courseIds.length === 0) return [];
+
+  const day = sql<string>`substr(${enrollments.enrolledAt}, 1, 10)`;
+
+  return db
+    .select({
+      date: day,
+      count: sql<number>`count(*)`,
+    })
+    .from(enrollments)
+    .where(inArray(enrollments.courseId, courseIds))
+    .groupBy(day)
+    .orderBy(day)
+    .all();
+}
+
+/**
+ * Revenue (summed `pricePaid`, in cents) bucketed by day across the
+ * instructor's owned courses, ordered chronologically. Returns an empty array
+ * when there are no owned courses or no purchases.
+ */
+export function getRevenueOverTime(instructorId: number): RevenueBucket[] {
+  const courseIds = getOwnedCourseIds(instructorId);
+  if (courseIds.length === 0) return [];
+
+  const day = sql<string>`substr(${purchases.createdAt}, 1, 10)`;
+
+  return db
+    .select({
+      date: day,
+      revenue: sql<number>`coalesce(sum(${purchases.pricePaid}), 0)`,
+    })
+    .from(purchases)
+    .where(inArray(purchases.courseId, courseIds))
+    .groupBy(day)
+    .orderBy(day)
+    .all();
+}
