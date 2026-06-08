@@ -2,6 +2,8 @@ import { eq, and, isNull } from "drizzle-orm";
 import { db } from "~/db";
 import { coupons, purchases, enrollments } from "~/db/schema";
 import { enrollUser } from "./enrollmentService";
+import { getTeamAdmins } from "./teamService";
+import { notifyCouponRedemption } from "./notificationService";
 import crypto from "crypto";
 
 // ─── Coupon Service ───
@@ -114,6 +116,24 @@ export function redeemCoupon(
   // Redemption already validated the coupon, course, and duplicate enrollment
   // above, so service-level validation is skipped here.
   const enrollment = enrollUser(userId, coupon.courseId, false, true);
+
+  // Notify every admin of the coupon's team that a seat was claimed. Best-effort
+  // (like the instructor notification): a notification failure must never roll
+  // back the redemption/enrollment.
+  try {
+    const admins = getTeamAdmins(coupon.teamId);
+    for (const admin of admins) {
+      notifyCouponRedemption({
+        recipientUserId: admin.userId,
+        actorUserId: userId,
+        courseId: coupon.courseId,
+        enrollmentId: enrollment.id,
+        teamId: coupon.teamId,
+      });
+    }
+  } catch {
+    // Intentionally ignored — redemption/enrollment already succeeded.
+  }
 
   return { ok: true, enrollment };
 }

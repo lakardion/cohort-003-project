@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 
@@ -18,6 +19,7 @@ import {
   getCouponsForTeam,
   redeemCoupon,
 } from "./couponService";
+import * as notificationService from "./notificationService";
 
 // Helper: create a team with admin and a purchase for coupon generation
 function setupTeamAndPurchase(country: string | null = "US") {
@@ -59,10 +61,28 @@ function createRedeemer() {
     .get();
 }
 
+// Helper: add a second admin to a team
+function addAdmin(teamId: number, name: string, email: string) {
+  const user = testDb
+    .insert(schema.users)
+    .values({ name, email, role: schema.UserRole.Instructor })
+    .returning()
+    .get();
+  testDb
+    .insert(schema.teamMembers)
+    .values({ teamId, userId: user.id, role: schema.TeamMemberRole.Admin })
+    .run();
+  return user;
+}
+
 describe("couponService", () => {
   beforeEach(() => {
     testDb = createTestDb();
     base = seedBaseData(testDb);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe("generateCoupons", () => {
@@ -202,15 +222,83 @@ describe("couponService", () => {
         .all();
       expect(enrollmentRows).toHaveLength(1);
 
-      // The instructor receives a notification via the shared enrollment seam.
-      const notifications = testDb
+      // The instructor still receives the Enrollment notification via the
+      // shared enrollment seam, alongside the new admin notifications.
+      const enrollmentNotifications = testDb
         .select()
         .from(schema.notifications)
+        .where(
+          eq(schema.notifications.type, schema.NotificationType.Enrollment)
+        )
         .all();
-      expect(notifications).toHaveLength(1);
-      expect(notifications[0].userId).toBe(base.instructor.id);
-      expect(notifications[0].actorUserId).toBe(redeemer.id);
-      expect(notifications[0].courseId).toBe(base.course.id);
+      expect(enrollmentNotifications).toHaveLength(1);
+      expect(enrollmentNotifications[0].userId).toBe(base.instructor.id);
+      expect(enrollmentNotifications[0].actorUserId).toBe(redeemer.id);
+      expect(enrollmentNotifications[0].courseId).toBe(base.course.id);
+    });
+
+    it("notifies the team admin that a coupon was redeemed", () => {
+      const { team, purchase } = setupTeamAndPurchase();
+      const [coupon] = generateCoupons(team.id, base.course.id, purchase.id, 1);
+      const redeemer = createRedeemer();
+
+      redeemCoupon(coupon.code, redeemer.id, "US");
+
+      const adminNotifications = testDb
+        .select()
+        .from(schema.notifications)
+        .where(
+          eq(schema.notifications.type, schema.NotificationType.CouponRedeemed)
+        )
+        .all();
+
+      expect(adminNotifications).toHaveLength(1);
+      // base.user is the team admin (added by setupTeamAndPurchase).
+      expect(adminNotifications[0].userId).toBe(base.user.id);
+      expect(adminNotifications[0].actorUserId).toBe(redeemer.id);
+      expect(adminNotifications[0].courseId).toBe(base.course.id);
+      expect(adminNotifications[0].teamId).toBe(team.id);
+    });
+
+    it("notifies every admin when a team has multiple admins", () => {
+      const { team, purchase } = setupTeamAndPurchase();
+      const secondAdmin = addAdmin(team.id, "Second Admin", "admin2@example.com");
+      const [coupon] = generateCoupons(team.id, base.course.id, purchase.id, 1);
+      const redeemer = createRedeemer();
+
+      redeemCoupon(coupon.code, redeemer.id, "US");
+
+      const recipients = testDb
+        .select()
+        .from(schema.notifications)
+        .where(
+          eq(schema.notifications.type, schema.NotificationType.CouponRedeemed)
+        )
+        .all()
+        .map((n) => n.userId);
+
+      expect(recipients).toHaveLength(2);
+      expect(recipients.sort()).toEqual([base.user.id, secondAdmin.id].sort());
+    });
+
+    it("completes enrollment even when admin notification fails (best-effort)", () => {
+      const { team, purchase } = setupTeamAndPurchase();
+      const [coupon] = generateCoupons(team.id, base.course.id, purchase.id, 1);
+      const redeemer = createRedeemer();
+
+      vi.spyOn(notificationService, "notifyCouponRedemption").mockImplementation(
+        () => {
+          throw new Error("notification backend down");
+        }
+      );
+
+      const result = redeemCoupon(coupon.code, redeemer.id, "US");
+
+      expect(result.ok).toBe(true);
+      const enrollmentRows = testDb.select().from(schema.enrollments).all();
+      expect(enrollmentRows).toHaveLength(1);
+      const updated = getCouponByCode(coupon.code);
+      expect(updated!.redeemedByUserId).toBe(redeemer.id);
     });
 
     it("rejects redemption of a nonexistent code", () => {
