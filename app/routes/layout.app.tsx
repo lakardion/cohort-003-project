@@ -13,7 +13,10 @@ import {
 } from "~/services/progressService";
 import { getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
 import { isTeamAdmin } from "~/services/teamService";
-import { getUnreadCountForUser } from "~/services/notificationService";
+import {
+  getUnreadCountForUser,
+  getNotificationsForUser,
+} from "~/services/notificationService";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const users = getAllUsers();
@@ -65,6 +68,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     unreadNotificationCount: currentUserId
       ? getUnreadCountForUser(currentUserId)
       : 0,
+    notifications: currentUserId
+      ? getNotificationsForUser(currentUserId, 10)
+      : [],
   };
 }
 
@@ -78,6 +84,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     countries,
     isTeamAdmin: userIsTeamAdmin,
     unreadNotificationCount,
+    notifications,
   } = loaderData;
 
   return (
@@ -87,6 +94,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
         recentCourses={recentCourses}
         isTeamAdmin={userIsTeamAdmin}
         unreadNotificationCount={unreadNotificationCount}
+        notifications={notifications}
       />
       <main className="flex-1 overflow-y-auto">
         <Outlet />
