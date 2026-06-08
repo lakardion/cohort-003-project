@@ -1,6 +1,6 @@
-import { eq, and, isNull, sql } from "drizzle-orm";
+import { eq, and, isNull, sql, desc } from "drizzle-orm";
 import { db } from "~/db";
-import { notifications, courses, NotificationType } from "~/db/schema";
+import { notifications, courses, users, NotificationType } from "~/db/schema";
 
 // ─── Notification Service ───
 // Durable in-app notifications addressed to a recipient (e.g. a course's
@@ -49,4 +49,56 @@ export function getUnreadCountForUser(userId: number) {
     .get();
 
   return result?.count ?? 0;
+}
+
+// Recent notifications for a recipient, newest-first, with the display fields
+// the UI needs (enrolling student's name, course title).
+export function getNotificationsForUser(userId: number, limit: number) {
+  return db
+    .select({
+      id: notifications.id,
+      type: notifications.type,
+      courseId: notifications.courseId,
+      courseTitle: courses.title,
+      actorUserId: notifications.actorUserId,
+      actorName: users.name,
+      readAt: notifications.readAt,
+      createdAt: notifications.createdAt,
+    })
+    .from(notifications)
+    .innerJoin(courses, eq(notifications.courseId, courses.id))
+    .innerJoin(users, eq(notifications.actorUserId, users.id))
+    .where(eq(notifications.userId, userId))
+    .orderBy(desc(notifications.createdAt), desc(notifications.id))
+    .limit(limit)
+    .all();
+}
+
+// Marks a single notification read, scoped to its recipient so a user cannot
+// mutate another user's notifications. Returns the updated row, or undefined
+// if it doesn't exist or doesn't belong to the user.
+export function markNotificationRead(notificationId: number, userId: number) {
+  return db
+    .update(notifications)
+    .set({ readAt: new Date().toISOString() })
+    .where(
+      and(
+        eq(notifications.id, notificationId),
+        eq(notifications.userId, userId)
+      )
+    )
+    .returning()
+    .get();
+}
+
+// Marks all of a user's unread notifications read. Returns the count affected.
+export function markAllRead(userId: number) {
+  const updated = db
+    .update(notifications)
+    .set({ readAt: new Date().toISOString() })
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+    .returning()
+    .all();
+
+  return updated.length;
 }
