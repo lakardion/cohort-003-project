@@ -23,18 +23,16 @@ Keep the plan in your response (a few bullets). For multi-step work, track it wi
 
 How you implement depends on whether the code is **backend** or **frontend**.
 
-**Backend** (e.g. `app/services/*`, `app/lib/*.server.ts`, loaders/actions, anything with a `*.test.ts` companion) — use red → green → refactor, one test at a time, tracer-bullet style:
+**Backend** — use red → green → refactor, one test at a time, tracer-bullet style:
 
 1. **Red** — write a single failing test for the next smallest slice of behavior. Run `pnpm run test` and confirm it fails for the right reason.
 2. **Green** — write the minimum code to make that one test pass. Re-run; confirm green.
-3. **Refactor** — clean up the code and test while staying green. Re-run.
-4. Repeat for the next slice. Add only one test per cycle — resist writing a batch of tests up front. Build the feature as a thin end-to-end thread first (the tracer bullet), then widen it with each subsequent red/green cycle.
+3. Repeat from step 1 for the next slice of behavior.
+4. **Refactor** — clean up the code and test while staying green. Re-run.
 
-**Frontend** (React components, route UI, styling, client interaction) — do **not** apply the red/green TDD loop. Implement directly:
+Each test should target one thin vertical slice through the system. Do not write all tests upfront - write one, make it pass, then move to the next.
 
-- Make the edits from the plan. Match surrounding code style, naming, and conventions.
-- Keep the change focused on the stated unit of work.
-- Add or update tests when the change affects testable behavior.
+**Frontend** — do **not** apply the red/green TDD loop. Implement directly.
 
 ## Phase 3 — Verify (feedback loop)
 
