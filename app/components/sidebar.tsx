@@ -2,7 +2,7 @@ import { NavLink, Form, useFetcher } from "react-router";
 import { useState, useEffect, useRef } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "~/lib/utils";
-import { UserRole } from "~/db/schema";
+import { UserRole, NotificationType } from "~/db/schema";
 import { UserAvatar } from "~/components/user-avatar";
 import {
   BookOpen,
@@ -39,8 +39,11 @@ interface RecentCourse {
 
 interface NotificationItem {
   id: number;
+  type: NotificationType;
   courseTitle: string;
   actorName: string;
+  // Live seats remaining for coupon-redeemed items; null for enrollment items.
+  seatsRemaining: number | null;
   readAt: string | null;
   createdAt: string;
 }
@@ -203,8 +206,26 @@ function NotificationsMenu({
                   )}
                 >
                   <p className="text-sidebar-foreground">
-                    <span className="font-medium">{n.actorName}</span> enrolled
-                    in <span className="font-medium">{n.courseTitle}</span>
+                    {n.type === NotificationType.CouponRedeemed ? (
+                      <>
+                        <span className="font-medium">{n.actorName}</span>{" "}
+                        redeemed a coupon for{" "}
+                        <span className="font-medium">{n.courseTitle}</span>
+                        {n.seatsRemaining !== null && (
+                          <>
+                            {" "}
+                            — {n.seatsRemaining}{" "}
+                            {n.seatsRemaining === 1 ? "seat" : "seats"} remaining
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium">{n.actorName}</span>{" "}
+                        enrolled in{" "}
+                        <span className="font-medium">{n.courseTitle}</span>
+                      </>
+                    )}
                   </p>
                   <p className="mt-0.5 text-xs text-sidebar-foreground/50">
                     {formatRelativeTime(n.createdAt)}
@@ -227,7 +248,10 @@ export function Sidebar({
   notifications = [],
 }: SidebarProps) {
   const currentUserRole = currentUser?.role ?? null;
-  const showNotifications = currentUserRole === UserRole.Instructor;
+  // The bell is for both instructors (enrollment notifications) and team admins
+  // (coupon-redeemed notifications); a user who is both gets one unified inbox.
+  const showNotifications =
+    currentUserRole === UserRole.Instructor || isTeamAdmin;
   const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
