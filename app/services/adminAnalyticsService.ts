@@ -1,6 +1,12 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "~/db";
-import { courses, enrollments, purchases } from "~/db/schema";
+import {
+  courses,
+  enrollments,
+  purchases,
+  users,
+  CourseStatus,
+} from "~/db/schema";
 
 // ─── Admin Analytics Service ───
 // Aggregates platform-wide revenue and enrollment metrics for the admin
@@ -95,6 +101,108 @@ export function getPlatformAnalyticsSummary(
     totalRevenue,
     courseCount: courseIds.length,
   };
+}
+
+export interface PlatformPerCourseAnalytics {
+  courseId: number;
+  title: string;
+  slug: string;
+  status: CourseStatus;
+  /** Owning instructor's user id. */
+  instructorId: number;
+  /** Owning instructor's display name. */
+  instructorName: string;
+  totalEnrollments: number;
+  completedEnrollments: number;
+  /** Percentage 0–100; 0 when the course has no enrollments. */
+  completionRate: number;
+  /** Sum of `pricePaid` for the course, in integer cents. */
+  revenue: number;
+}
+
+/**
+ * One analytics row per course on the platform (across all instructors), or
+ * scoped to a single instructor's courses when `instructorId` is supplied.
+ * Every course appears regardless of publication status (draft/published/
+ * archived) and regardless of activity — courses with no enrollments or
+ * purchases yield zeros rather than being dropped. Each row carries the owning
+ * instructor's id + name, the meaningful addition over the instructor-scoped
+ * table where every row shares one owner.
+ *
+ * Uses set-based grouped queries (one per metric domain) merged in memory,
+ * rather than an N+1 loop per course, so it scales with catalog size.
+ */
+export function getPlatformPerCourseAnalytics(
+  instructorId?: number
+): PlatformPerCourseAnalytics[] {
+  const courseQuery = db
+    .select({
+      id: courses.id,
+      title: courses.title,
+      slug: courses.slug,
+      status: courses.status,
+      instructorId: courses.instructorId,
+      instructorName: users.name,
+    })
+    .from(courses)
+    .innerJoin(users, eq(courses.instructorId, users.id));
+
+  const scopedCourses =
+    instructorId === undefined
+      ? courseQuery.all()
+      : courseQuery.where(eq(courses.instructorId, instructorId)).all();
+
+  if (scopedCourses.length === 0) return [];
+
+  const courseIds = scopedCourses.map((c) => c.id);
+
+  const enrollmentRows = db
+    .select({
+      courseId: enrollments.courseId,
+      total: sql<number>`count(*)`,
+      completed: sql<number>`sum(case when ${enrollments.completedAt} is not null then 1 else 0 end)`,
+    })
+    .from(enrollments)
+    .where(inArray(enrollments.courseId, courseIds))
+    .groupBy(enrollments.courseId)
+    .all();
+
+  const revenueRows = db
+    .select({
+      courseId: purchases.courseId,
+      total: sql<number>`coalesce(sum(${purchases.pricePaid}), 0)`,
+    })
+    .from(purchases)
+    .where(inArray(purchases.courseId, courseIds))
+    .groupBy(purchases.courseId)
+    .all();
+
+  const enrollmentByCourse = new Map(enrollmentRows.map((r) => [r.courseId, r]));
+  const revenueByCourse = new Map(revenueRows.map((r) => [r.courseId, r]));
+
+  return scopedCourses.map((course) => {
+    const e = enrollmentByCourse.get(course.id);
+    const r = revenueByCourse.get(course.id);
+
+    const totalEnrollments = e?.total ?? 0;
+    const completedEnrollments = e?.completed ?? 0;
+
+    return {
+      courseId: course.id,
+      title: course.title,
+      slug: course.slug,
+      status: course.status,
+      instructorId: course.instructorId,
+      instructorName: course.instructorName,
+      totalEnrollments,
+      completedEnrollments,
+      completionRate:
+        totalEnrollments > 0
+          ? (completedEnrollments / totalEnrollments) * 100
+          : 0,
+      revenue: r?.total ?? 0,
+    };
+  });
 }
 
 export interface RevenueBucket {

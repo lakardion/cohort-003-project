@@ -14,6 +14,7 @@ vi.mock("~/db", () => ({
 // Import after mock so the module picks up our test db
 import {
   getPlatformAnalyticsSummary,
+  getPlatformPerCourseAnalytics,
   getPlatformRevenueOverTime,
 } from "./adminAnalyticsService";
 
@@ -204,6 +205,97 @@ describe("adminAnalyticsService", () => {
         totalRevenue: 0,
         courseCount: 0,
       });
+    });
+  });
+
+  describe("getPlatformPerCourseAnalytics", () => {
+    it("returns one row per course across all instructors with the correct instructor name", () => {
+      const instructor2 = createInstructor("Inst 2", "inst2@example.com");
+      const course2 = createCourse(instructor2.id, "inst2-course");
+
+      const s1 = createStudent("S1", "s1@example.com");
+      const s2 = createStudent("S2", "s2@example.com");
+      const s3 = createStudent("S3", "s3@example.com");
+
+      // base.course (Test Instructor): 2 enrollments, 1 completed → 50%, 4999.
+      enroll(s1.id, base.course.id, true);
+      enroll(s2.id, base.course.id, false);
+      purchase(s1.id, base.course.id, 4999);
+
+      // course2 (Inst 2): 1 enrollment completed → 100%, 2500.
+      enroll(s3.id, course2.id, true);
+      purchase(s3.id, course2.id, 2500);
+
+      const rows = getPlatformPerCourseAnalytics();
+      expect(rows).toHaveLength(2);
+
+      const byCourse = new Map(rows.map((r) => [r.courseId, r]));
+
+      const row1 = byCourse.get(base.course.id)!;
+      expect(row1.instructorId).toBe(base.instructor.id);
+      expect(row1.instructorName).toBe("Test Instructor");
+      expect(row1.totalEnrollments).toBe(2);
+      expect(row1.completedEnrollments).toBe(1);
+      expect(row1.completionRate).toBe(50);
+      expect(row1.revenue).toBe(4999);
+
+      const row2 = byCourse.get(course2.id)!;
+      expect(row2.instructorId).toBe(instructor2.id);
+      expect(row2.instructorName).toBe("Inst 2");
+      expect(row2.totalEnrollments).toBe(1);
+      expect(row2.completionRate).toBe(100);
+      expect(row2.revenue).toBe(2500);
+    });
+
+    it("includes zero-activity courses of every status with well-formed zeros", () => {
+      const draft = createCourse(
+        base.instructor.id,
+        "draft",
+        schema.CourseStatus.Draft
+      );
+      const archived = createCourse(
+        base.instructor.id,
+        "archived",
+        schema.CourseStatus.Archived
+      );
+
+      const rows = getPlatformPerCourseAnalytics();
+      // base.course (published) + draft + archived.
+      expect(rows).toHaveLength(3);
+
+      const byCourse = new Map(rows.map((r) => [r.courseId, r]));
+
+      expect(byCourse.get(base.course.id)!.status).toBe(
+        schema.CourseStatus.Published
+      );
+      expect(byCourse.get(draft.id)!.status).toBe(schema.CourseStatus.Draft);
+      expect(byCourse.get(archived.id)!.status).toBe(
+        schema.CourseStatus.Archived
+      );
+
+      // No enrollments/purchases anywhere → zeros, no divide-by-zero.
+      for (const row of rows) {
+        expect(row.totalEnrollments).toBe(0);
+        expect(row.completedEnrollments).toBe(0);
+        expect(row.completionRate).toBe(0);
+        expect(row.revenue).toBe(0);
+      }
+    });
+
+    it("scopes the rows to a single instructor when instructorId is given", () => {
+      const instructor2 = createInstructor("Inst 2", "inst2@example.com");
+      createCourse(instructor2.id, "inst2-course");
+
+      const scoped = getPlatformPerCourseAnalytics(base.instructor.id);
+
+      expect(scoped).toHaveLength(1);
+      expect(scoped[0].courseId).toBe(base.course.id);
+      expect(scoped[0].instructorName).toBe("Test Instructor");
+    });
+
+    it("returns an empty array when the filtered instructor owns no courses", () => {
+      const lonely = createInstructor("Lonely", "lonely@example.com");
+      expect(getPlatformPerCourseAnalytics(lonely.id)).toEqual([]);
     });
   });
 
