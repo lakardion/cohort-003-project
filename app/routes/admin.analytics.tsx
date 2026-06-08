@@ -1,6 +1,7 @@
-import { Link, data, isRouteErrorResponse } from "react-router";
+import { Form, Link, data, isRouteErrorResponse, useSubmit } from "react-router";
 import type { Route } from "./+types/admin.analytics";
 import {
+  getInstructorsWithCourses,
   getPlatformAnalyticsSummary,
   getPlatformPerCourseAnalytics,
   getPlatformRevenueOverTime,
@@ -48,13 +49,26 @@ export async function loader({ request }: Route.LoaderArgs) {
     });
   }
 
-  const summary = getPlatformAnalyticsSummary();
-  const perCourse = getPlatformPerCourseAnalytics();
-  const revenueOverTime = getPlatformRevenueOverTime();
+  // Optional instructor filter: a query-string parameter so the scoped view is
+  // linkable and survives a reload. "All instructors" is the absent/empty
+  // value. A non-numeric or empty value falls back to the unfiltered platform
+  // view, so every number on the page reflects the same instructor.
+  const rawInstructorId = new URL(request.url).searchParams.get("instructorId");
+  const parsedInstructorId = rawInstructorId ? Number(rawInstructorId) : NaN;
+  const instructorId = Number.isInteger(parsedInstructorId)
+    ? parsedInstructorId
+    : undefined;
+
+  const instructors = getInstructorsWithCourses();
+  const summary = getPlatformAnalyticsSummary(instructorId);
+  const perCourse = getPlatformPerCourseAnalytics(instructorId);
+  const revenueOverTime = getPlatformRevenueOverTime(instructorId);
 
   // Shape into a serialisable, already-formatted view object so the component
   // stays presentational.
   return {
+    instructors,
+    selectedInstructorId: instructorId ?? null,
     summary: {
       totalEnrollments: summary.totalEnrollments,
       totalRevenue: formatPrice(summary.totalRevenue),
@@ -132,7 +146,10 @@ function StatCard({ label, value, icon, hint }: StatCardProps) {
 }
 
 export default function AdminAnalytics({ loaderData }: Route.ComponentProps) {
-  const { summary, perCourse, revenueOverTime } = loaderData;
+  const { instructors, selectedInstructorId, summary, perCourse, revenueOverTime } =
+    loaderData;
+  const submit = useSubmit();
+  const isFiltered = selectedInstructorId !== null;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -145,25 +162,73 @@ export default function AdminAnalytics({ loaderData }: Route.ComponentProps) {
         <span className="text-foreground">Platform Analytics</span>
       </nav>
 
-      <div className="mb-8">
-        <h1 className="flex items-center gap-2 text-3xl font-bold">
-          <ChartColumn className="size-7" />
-          Platform Analytics
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Revenue and enrollment health across every instructor and course.
-        </p>
+      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 text-3xl font-bold">
+            <ChartColumn className="size-7" />
+            Platform Analytics
+          </h1>
+          <p className="mt-1 text-muted-foreground">
+            Revenue and enrollment health across every instructor and course.
+          </p>
+        </div>
+
+        {/* Instructor filter: a GET form whose select auto-submits on change,
+            re-scoping cards, chart, and table together via ?instructorId. */}
+        {instructors.length > 0 ? (
+          <Form
+            method="get"
+            onChange={(e) => submit(e.currentTarget)}
+            className="flex items-center gap-2"
+          >
+            <label
+              htmlFor="instructorId"
+              className="text-sm font-medium text-muted-foreground"
+            >
+              Instructor
+            </label>
+            <select
+              id="instructorId"
+              name="instructorId"
+              key={selectedInstructorId ?? "all"}
+              defaultValue={selectedInstructorId ?? ""}
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">All instructors</option>
+              {instructors.map((instructor) => (
+                <option key={instructor.id} value={instructor.id}>
+                  {instructor.name}
+                </option>
+              ))}
+            </select>
+          </Form>
+        ) : null}
       </div>
 
       {summary.courseCount === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <BookOpen className="mb-4 size-12 text-muted-foreground/50" />
-            <h2 className="text-lg font-medium">No courses yet</h2>
-            <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              This dashboard will populate with revenue and enrollment metrics
-              once instructors create courses on the platform.
-            </p>
+            {isFiltered ? (
+              <>
+                <h2 className="text-lg font-medium">No courses for this instructor</h2>
+                <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                  The selected instructor owns no courses. Switch back to{" "}
+                  <Link to="/admin/analytics" className="underline">
+                    All instructors
+                  </Link>{" "}
+                  to see the full platform picture.
+                </p>
+              </>
+            ) : (
+              <>
+                <h2 className="text-lg font-medium">No courses yet</h2>
+                <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                  This dashboard will populate with revenue and enrollment
+                  metrics once instructors create courses on the platform.
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (
