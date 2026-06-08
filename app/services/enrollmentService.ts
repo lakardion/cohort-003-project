@@ -8,6 +8,7 @@ import {
   lessonProgress,
   LessonProgressStatus,
 } from "~/db/schema";
+import { notifyEnrollment } from "./notificationService";
 
 // ─── Enrollment Service ───
 // Handles enrollment, unenrollment, duplicate prevention, and enrollment validation.
@@ -86,6 +87,14 @@ export function enrollUser(
     .values({ userId, courseId })
     .returning()
     .get();
+
+  // Notify the course's instructor. Best-effort: notifying must never break
+  // the enrollment critical path, so failures are swallowed.
+  try {
+    notifyEnrollment(enrollment);
+  } catch {
+    // Intentionally ignored — enrollment already succeeded.
+  }
 
   // sendEmail parameter accepted but not implemented (no email service — PRD out of scope)
   if (sendEmail) {
