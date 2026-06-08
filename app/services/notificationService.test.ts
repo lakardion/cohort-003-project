@@ -15,6 +15,7 @@ vi.mock("~/db", () => ({
 // Import after mock so the module picks up our test db
 import {
   notifyEnrollment,
+  notifyCouponRedemption,
   getUnreadCountForUser,
   getNotificationsForUser,
   markNotificationRead,
@@ -59,6 +60,30 @@ describe("notificationService", () => {
       });
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe("notifyCouponRedemption", () => {
+    it("creates a CouponRedeemed notification addressed to the recipient with team context", () => {
+      const team = testDb.insert(schema.teams).values({}).returning().get();
+      const enrollment = createEnrollment(base.user.id, base.course.id);
+
+      const notification = notifyCouponRedemption({
+        recipientUserId: base.instructor.id,
+        actorUserId: base.user.id,
+        courseId: base.course.id,
+        enrollmentId: enrollment.id,
+        teamId: team.id,
+      });
+
+      expect(notification).not.toBeNull();
+      expect(notification!.userId).toBe(base.instructor.id);
+      expect(notification!.type).toBe(schema.NotificationType.CouponRedeemed);
+      expect(notification!.courseId).toBe(base.course.id);
+      expect(notification!.actorUserId).toBe(base.user.id);
+      expect(notification!.enrollmentId).toBe(enrollment.id);
+      expect(notification!.teamId).toBe(team.id);
+      expect(notification!.readAt).toBeNull();
     });
   });
 

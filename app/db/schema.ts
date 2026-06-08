@@ -37,6 +37,7 @@ export enum TeamMemberRole {
 
 export enum NotificationType {
   Enrollment = "enrollment",
+  CouponRedeemed = "coupon_redeemed",
 }
 
 // ─── Tables ───
@@ -334,6 +335,10 @@ export const notifications = sqliteTable("notifications", {
     // A notification is about an enrollment; if the enrollment is removed
     // (e.g. unenrollment), its notifications go with it.
     .references(() => enrollments.id, { onDelete: "cascade" }),
+  // Team context for the notification. Null for enrollment notifications;
+  // set for coupon-redeemed notifications so the team+course pair needed to
+  // compute seats-remaining is available at read time.
+  teamId: integer("team_id").references(() => teams.id),
   // null = unread; set to an ISO timestamp when read.
   readAt: text("read_at"),
   createdAt: text("created_at")

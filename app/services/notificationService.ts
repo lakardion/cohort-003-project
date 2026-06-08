@@ -41,6 +41,32 @@ export function notifyEnrollment(enrollment: EnrollmentLike) {
     .get();
 }
 
+interface CouponRedemptionNotification {
+  recipientUserId: number;
+  actorUserId: number;
+  courseId: number;
+  enrollmentId: number;
+  teamId: number;
+}
+
+// Creates a coupon-redeemed notification addressed to a team admin. Carries the
+// team context so seats-remaining can be computed live at read time. Seats are
+// intentionally not stored on the row.
+export function notifyCouponRedemption(params: CouponRedemptionNotification) {
+  return db
+    .insert(notifications)
+    .values({
+      userId: params.recipientUserId,
+      type: NotificationType.CouponRedeemed,
+      courseId: params.courseId,
+      actorUserId: params.actorUserId,
+      enrollmentId: params.enrollmentId,
+      teamId: params.teamId,
+    })
+    .returning()
+    .get();
+}
+
 export function getUnreadCountForUser(userId: number) {
   const result = db
     .select({ count: sql<number>`count(*)` })

@@ -59,3 +59,18 @@ export function getTeamMembers(teamId: number) {
     .where(eq(teamMembers.teamId, teamId))
     .all();
 }
+
+// All members of a team whose role is Admin. Used to fan out team-scoped
+// notifications (e.g. coupon redemptions) to every admin.
+export function getTeamAdmins(teamId: number) {
+  return db
+    .select()
+    .from(teamMembers)
+    .where(
+      and(
+        eq(teamMembers.teamId, teamId),
+        eq(teamMembers.role, TeamMemberRole.Admin)
+      )
+    )
+    .all();
+}
