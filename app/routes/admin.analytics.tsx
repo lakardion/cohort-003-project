@@ -1,6 +1,10 @@
 import { Link, data, isRouteErrorResponse } from "react-router";
 import type { Route } from "./+types/admin.analytics";
-import { getPlatformAnalyticsSummary } from "~/services/adminAnalyticsService";
+import {
+  getPlatformAnalyticsSummary,
+  getPlatformRevenueOverTime,
+} from "~/services/adminAnalyticsService";
+import { TimeSeriesChart } from "~/components/time-series-chart";
 import { getCurrentUserId } from "~/lib/session";
 import { getUserById } from "~/services/userService";
 import { UserRole } from "~/db/schema";
@@ -44,6 +48,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 
   const summary = getPlatformAnalyticsSummary();
+  const revenueOverTime = getPlatformRevenueOverTime();
 
   // Shape into a serialisable, already-formatted view object so the component
   // stays presentational.
@@ -54,7 +59,18 @@ export async function loader({ request }: Route.LoaderArgs) {
       completionRate: `${Math.round(summary.completionRate)}%`,
       courseCount: summary.courseCount,
     },
+    // Charts need numeric values to plot; keep cents raw and format on the
+    // axis/tooltip in the chart component.
+    revenueOverTime: revenueOverTime.map((b) => ({
+      date: b.date,
+      value: b.revenue,
+    })),
   };
+}
+
+/** Compact currency formatter for chart axes/tooltips (input is cents). */
+function formatRevenueAxis(cents: number): string {
+  return `$${Math.round(cents / 100).toLocaleString("en-US")}`;
 }
 
 interface StatCardProps {
@@ -80,7 +96,7 @@ function StatCard({ label, value, icon, hint }: StatCardProps) {
 }
 
 export default function AdminAnalytics({ loaderData }: Route.ComponentProps) {
-  const { summary } = loaderData;
+  const { summary, revenueOverTime } = loaderData;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -115,36 +131,58 @@ export default function AdminAnalytics({ loaderData }: Route.ComponentProps) {
           </CardContent>
         </Card>
       ) : (
-        <section aria-label="Platform summary">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard
-              label="Total revenue"
-              value={summary.totalRevenue}
-              icon={<DollarSign className="size-4" />}
-              hint="Sum of amounts paid (PPP-adjusted)"
-            />
-            <StatCard
-              label="Total enrollments"
-              value={summary.totalEnrollments}
-              icon={<Users className="size-4" />}
-              hint="Across the whole platform"
-            />
-            <StatCard
-              label="Completion rate"
-              value={summary.completionRate}
-              icon={<GraduationCap className="size-4" />}
-              hint="Enrolled students who finished"
-            />
-            <StatCard
-              label="Courses"
-              value={summary.courseCount}
-              icon={<BookOpen className="size-4" />}
-              hint={`${summary.courseCount} ${
-                summary.courseCount === 1 ? "course" : "courses"
-              } on the platform`}
-            />
-          </div>
-        </section>
+        <div className="space-y-8">
+          <section aria-label="Platform summary">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard
+                label="Total revenue"
+                value={summary.totalRevenue}
+                icon={<DollarSign className="size-4" />}
+                hint="Sum of amounts paid (PPP-adjusted)"
+              />
+              <StatCard
+                label="Total enrollments"
+                value={summary.totalEnrollments}
+                icon={<Users className="size-4" />}
+                hint="Across the whole platform"
+              />
+              <StatCard
+                label="Completion rate"
+                value={summary.completionRate}
+                icon={<GraduationCap className="size-4" />}
+                hint="Enrolled students who finished"
+              />
+              <StatCard
+                label="Courses"
+                value={summary.courseCount}
+                icon={<BookOpen className="size-4" />}
+                hint={`${summary.courseCount} ${
+                  summary.courseCount === 1 ? "course" : "courses"
+                } on the platform`}
+              />
+            </div>
+          </section>
+
+          {/* Revenue over time */}
+          <section aria-label="Revenue over time">
+            <h2 className="mb-3 text-lg font-semibold">Over time</h2>
+            <Card>
+              <CardContent className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                  <DollarSign className="size-4" />
+                  Revenue over time
+                </div>
+                <TimeSeriesChart
+                  data={revenueOverTime}
+                  label="Platform revenue over time"
+                  seriesName="Revenue"
+                  formatValue={formatRevenueAxis}
+                  color="var(--color-chart-2, #22c55e)"
+                />
+              </CardContent>
+            </Card>
+          </section>
+        </div>
       )}
     </div>
   );
