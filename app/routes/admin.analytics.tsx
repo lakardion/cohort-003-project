@@ -2,12 +2,13 @@ import { Link, data, isRouteErrorResponse } from "react-router";
 import type { Route } from "./+types/admin.analytics";
 import {
   getPlatformAnalyticsSummary,
+  getPlatformPerCourseAnalytics,
   getPlatformRevenueOverTime,
 } from "~/services/adminAnalyticsService";
 import { TimeSeriesChart } from "~/components/time-series-chart";
 import { getCurrentUserId } from "~/lib/session";
 import { getUserById } from "~/services/userService";
-import { UserRole } from "~/db/schema";
+import { CourseStatus, UserRole } from "~/db/schema";
 import { formatPrice } from "~/lib/utils";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
@@ -48,6 +49,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 
   const summary = getPlatformAnalyticsSummary();
+  const perCourse = getPlatformPerCourseAnalytics();
   const revenueOverTime = getPlatformRevenueOverTime();
 
   // Shape into a serialisable, already-formatted view object so the component
@@ -59,6 +61,15 @@ export async function loader({ request }: Route.LoaderArgs) {
       completionRate: `${Math.round(summary.completionRate)}%`,
       courseCount: summary.courseCount,
     },
+    perCourse: perCourse.map((c) => ({
+      courseId: c.courseId,
+      title: c.title,
+      status: c.status,
+      instructorName: c.instructorName,
+      enrollments: c.totalEnrollments,
+      revenue: formatPrice(c.revenue),
+      completionRate: `${Math.round(c.completionRate)}%`,
+    })),
     // Charts need numeric values to plot; keep cents raw and format on the
     // axis/tooltip in the chart component.
     revenueOverTime: revenueOverTime.map((b) => ({
@@ -71,6 +82,31 @@ export async function loader({ request }: Route.LoaderArgs) {
 /** Compact currency formatter for chart axes/tooltips (input is cents). */
 function formatRevenueAxis(cents: number): string {
   return `$${Math.round(cents / 100).toLocaleString("en-US")}`;
+}
+
+function StatusBadge({ status }: { status: CourseStatus }) {
+  switch (status) {
+    case CourseStatus.Published:
+      return (
+        <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+          Published
+        </span>
+      );
+    case CourseStatus.Draft:
+      return (
+        <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+          Draft
+        </span>
+      );
+    case CourseStatus.Archived:
+      return (
+        <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-800 dark:bg-gray-900/30 dark:text-gray-400">
+          Archived
+        </span>
+      );
+    default:
+      return null;
+  }
 }
 
 interface StatCardProps {
@@ -96,7 +132,7 @@ function StatCard({ label, value, icon, hint }: StatCardProps) {
 }
 
 export default function AdminAnalytics({ loaderData }: Route.ComponentProps) {
-  const { summary, revenueOverTime } = loaderData;
+  const { summary, perCourse, revenueOverTime } = loaderData;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -161,6 +197,86 @@ export default function AdminAnalytics({ loaderData }: Route.ComponentProps) {
                 } on the platform`}
               />
             </div>
+          </section>
+
+          {/* Per-course breakdown */}
+          <section aria-label="Per-course breakdown">
+            <h2 className="mb-3 text-lg font-semibold">Courses</h2>
+            <Card>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <caption className="sr-only">
+                      Per-course breakdown of instructor, status, enrollments,
+                      revenue, and completion rate across the platform
+                    </caption>
+                    <thead>
+                      <tr className="border-b border-border bg-muted/50">
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Course
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Instructor
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Enrollments
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Revenue
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        >
+                          Completion
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {perCourse.map((course) => (
+                        <tr
+                          key={course.courseId}
+                          className="border-b border-border last:border-0"
+                        >
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium">
+                                {course.title}
+                              </span>
+                              <StatusBadge status={course.status} />
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-muted-foreground">
+                            {course.instructorName}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            {course.enrollments}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            {course.revenue}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            {course.completionRate}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           </section>
 
           {/* Revenue over time */}
