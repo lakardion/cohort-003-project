@@ -96,3 +96,36 @@ export function getPlatformAnalyticsSummary(
     courseCount: courseIds.length,
   };
 }
+
+export interface RevenueBucket {
+  /** Day bucket as an ISO date string (YYYY-MM-DD). */
+  date: string;
+  /** Sum of `pricePaid` for the bucket, in integer cents. */
+  revenue: number;
+}
+
+/**
+ * Revenue (summed `pricePaid`, in cents) bucketed by day across the entire
+ * platform, or scoped to a single instructor's courses when `instructorId` is
+ * supplied. Ordered chronologically. Returns an empty array when there are no
+ * matching courses or no purchases.
+ */
+export function getPlatformRevenueOverTime(
+  instructorId?: number
+): RevenueBucket[] {
+  const courseIds = getScopedCourseIds(instructorId);
+  if (courseIds.length === 0) return [];
+
+  const day = sql<string>`substr(${purchases.createdAt}, 1, 10)`;
+
+  return db
+    .select({
+      date: day,
+      revenue: sql<number>`coalesce(sum(${purchases.pricePaid}), 0)`,
+    })
+    .from(purchases)
+    .where(inArray(purchases.courseId, courseIds))
+    .groupBy(day)
+    .orderBy(day)
+    .all();
+}

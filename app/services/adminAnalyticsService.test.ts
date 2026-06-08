@@ -12,7 +12,10 @@ vi.mock("~/db", () => ({
 }));
 
 // Import after mock so the module picks up our test db
-import { getPlatformAnalyticsSummary } from "./adminAnalyticsService";
+import {
+  getPlatformAnalyticsSummary,
+  getPlatformRevenueOverTime,
+} from "./adminAnalyticsService";
 
 // ─── Seeding helpers ───
 
@@ -67,6 +70,20 @@ function purchase(userId: number, courseId: number, pricePaid: number) {
   return testDb
     .insert(schema.purchases)
     .values({ userId, courseId, pricePaid, country: null })
+    .returning()
+    .get();
+}
+
+/** Purchase with an explicit createdAt timestamp (ISO string). */
+function purchaseAt(
+  userId: number,
+  courseId: number,
+  pricePaid: number,
+  createdAt: string
+) {
+  return testDb
+    .insert(schema.purchases)
+    .values({ userId, courseId, pricePaid, country: null, createdAt })
     .returning()
     .get();
 }
@@ -187,6 +204,51 @@ describe("adminAnalyticsService", () => {
         totalRevenue: 0,
         courseCount: 0,
       });
+    });
+  });
+
+  describe("getPlatformRevenueOverTime", () => {
+    it("returns an empty array when there are no purchases", () => {
+      // seedBaseData creates one course but no purchases.
+      expect(getPlatformRevenueOverTime()).toEqual([]);
+    });
+
+    it("buckets summed revenue by day across all instructors, ordered chronologically", () => {
+      const instructor2 = createInstructor("Inst 2", "inst2@example.com");
+      const course2 = createCourse(instructor2.id, "inst2-course");
+      const s1 = createStudent("S1", "s1@example.com");
+      const s2 = createStudent("S2", "s2@example.com");
+      const s3 = createStudent("S3", "s3@example.com");
+
+      // 2026-01-01: 4999 (inst1) + 1500 (inst2) = 6499; 2026-01-05: 2000.
+      purchaseAt(s1.id, base.course.id, 4999, "2026-01-01T08:00:00.000Z");
+      purchaseAt(s2.id, course2.id, 1500, "2026-01-01T22:00:00.000Z");
+      purchaseAt(s3.id, base.course.id, 2000, "2026-01-05T10:00:00.000Z");
+
+      expect(getPlatformRevenueOverTime()).toEqual([
+        { date: "2026-01-01", revenue: 6499 },
+        { date: "2026-01-05", revenue: 2000 },
+      ]);
+    });
+
+    it("scopes the series to a single instructor when instructorId is given", () => {
+      const instructor2 = createInstructor("Inst 2", "inst2@example.com");
+      const course2 = createCourse(instructor2.id, "inst2-course");
+      const s1 = createStudent("S1", "s1@example.com");
+      const s2 = createStudent("S2", "s2@example.com");
+
+      purchaseAt(s1.id, base.course.id, 2000, "2026-01-01T00:00:00.000Z");
+      // instructor2's revenue must be excluded when scoped to base.instructor.
+      purchaseAt(s2.id, course2.id, 9999, "2026-01-01T00:00:00.000Z");
+
+      expect(getPlatformRevenueOverTime(base.instructor.id)).toEqual([
+        { date: "2026-01-01", revenue: 2000 },
+      ]);
+    });
+
+    it("returns an empty array when the filtered instructor owns no courses", () => {
+      const lonely = createInstructor("Lonely", "lonely@example.com");
+      expect(getPlatformRevenueOverTime(lonely.id)).toEqual([]);
     });
   });
 });
