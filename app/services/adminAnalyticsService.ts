@@ -237,3 +237,23 @@ export function getPlatformRevenueOverTime(
     .orderBy(day)
     .all();
 }
+
+export interface InstructorWithCourses {
+  id: number;
+  name: string;
+}
+
+/**
+ * The id + name of every instructor who owns at least one course, ordered by
+ * name, for populating the dashboard's instructor filter. Instructors (or
+ * students) who own no courses are excluded, and each instructor appears once
+ * regardless of how many courses they own.
+ */
+export function getInstructorsWithCourses(): InstructorWithCourses[] {
+  return db
+    .selectDistinct({ id: users.id, name: users.name })
+    .from(users)
+    .innerJoin(courses, eq(courses.instructorId, users.id))
+    .orderBy(users.name)
+    .all();
+}

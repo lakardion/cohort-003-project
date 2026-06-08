@@ -13,6 +13,7 @@ vi.mock("~/db", () => ({
 
 // Import after mock so the module picks up our test db
 import {
+  getInstructorsWithCourses,
   getPlatformAnalyticsSummary,
   getPlatformPerCourseAnalytics,
   getPlatformRevenueOverTime,
@@ -341,6 +342,45 @@ describe("adminAnalyticsService", () => {
     it("returns an empty array when the filtered instructor owns no courses", () => {
       const lonely = createInstructor("Lonely", "lonely@example.com");
       expect(getPlatformRevenueOverTime(lonely.id)).toEqual([]);
+    });
+  });
+
+  describe("getInstructorsWithCourses", () => {
+    it("returns only instructors who own at least one course", () => {
+      const instructor2 = createInstructor("Inst 2", "inst2@example.com");
+      createCourse(instructor2.id, "inst2-course");
+
+      // An instructor and a student who own no courses must be excluded.
+      createInstructor("Lonely", "lonely@example.com");
+      createStudent("Stu", "stu@example.com");
+
+      const result = getInstructorsWithCourses();
+
+      const ids = result.map((r) => r.id).sort((a, b) => a - b);
+      expect(ids).toEqual(
+        [base.instructor.id, instructor2.id].sort((a, b) => a - b)
+      );
+
+      const names = result.map((r) => r.name);
+      expect(names).toContain("Test Instructor");
+      expect(names).toContain("Inst 2");
+      expect(names).not.toContain("Lonely");
+      expect(names).not.toContain("Stu");
+    });
+
+    it("returns one entry per instructor even when they own multiple courses", () => {
+      createCourse(base.instructor.id, "second");
+      createCourse(base.instructor.id, "third");
+
+      const result = getInstructorsWithCourses();
+
+      expect(result.filter((r) => r.id === base.instructor.id)).toHaveLength(1);
+    });
+
+    it("returns an empty array when no courses exist", () => {
+      testDb.delete(schema.courses).run();
+
+      expect(getInstructorsWithCourses()).toEqual([]);
     });
   });
 });
