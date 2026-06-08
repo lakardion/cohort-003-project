@@ -1,8 +1,10 @@
 import { Outlet } from "react-router";
+import { useEffect, useRef } from "react";
 import type { Route } from "./+types/layout.app";
 import { Sidebar } from "~/components/sidebar";
 import { DevUI } from "~/components/dev-ui";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
+import { buildEnrollmentToastMessage } from "~/lib/notification-toast";
 import { getAllUsers, getUserById } from "~/services/userService";
 import { getCurrentUserId, getDevCountry } from "~/lib/session";
 import {
@@ -86,6 +88,23 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     unreadNotificationCount,
     notifications,
   } = loaderData;
+
+  // Toast unread enrollment notifications on arrival. The app shell stays
+  // mounted across client navigations, so this ref persists for the session
+  // and ensures each notification is announced at most once (no re-spamming
+  // as the instructor moves between pages).
+  const toastedIds = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const fresh = notifications.filter(
+      (n) => n.readAt === null && !toastedIds.current.has(n.id)
+    );
+    if (fresh.length === 0) return;
+
+    fresh.forEach((n) => toastedIds.current.add(n.id));
+
+    const message = buildEnrollmentToastMessage(fresh);
+    if (message) toast(message);
+  }, [notifications]);
 
   return (
     <div className="flex h-screen overflow-hidden">
