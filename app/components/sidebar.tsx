@@ -16,6 +16,7 @@ import {
   Sun,
   LogOut,
   Settings,
+  Bell,
 } from "lucide-react";
 
 interface CurrentUser {
@@ -39,6 +40,7 @@ interface SidebarProps {
   currentUser: CurrentUser | null;
   recentCourses?: RecentCourse[];
   isTeamAdmin?: boolean;
+  unreadNotificationCount?: number;
 }
 
 interface NavItem {
@@ -103,8 +105,10 @@ export function Sidebar({
   currentUser,
   recentCourses = [],
   isTeamAdmin = false,
+  unreadNotificationCount = 0,
 }: SidebarProps) {
   const currentUserRole = currentUser?.role ?? null;
+  const showNotifications = currentUserRole === UserRole.Instructor;
   const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
@@ -148,6 +152,20 @@ export function Sidebar({
               {item.label}
             </NavLink>
           ))}
+        {showNotifications && (
+          <button
+            type="button"
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          >
+            <Bell className="size-4" />
+            Notifications
+            {unreadNotificationCount > 0 && (
+              <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-xs font-semibold text-primary-foreground">
+                {unreadNotificationCount}
+              </span>
+            )}
+          </button>
+        )}
         {isTeamAdmin && (
           <NavLink
             to="/team"

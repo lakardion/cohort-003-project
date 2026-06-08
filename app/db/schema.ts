@@ -35,6 +35,10 @@ export enum TeamMemberRole {
   Member = "member",
 }
 
+export enum NotificationType {
+  Enrollment = "enrollment",
+}
+
 // ─── Tables ───
 
 export const users = sqliteTable("users", {
@@ -306,6 +310,32 @@ export const videoWatchEvents = sqliteTable("video_watch_events", {
     .references(() => lessons.id),
   eventType: text("event_type").notNull(),
   positionSeconds: real("position_seconds").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
+export const notifications = sqliteTable("notifications", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  // Recipient of the notification (e.g. the course's instructor).
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  type: text("type").notNull().$type<NotificationType>(),
+  courseId: integer("course_id")
+    .notNull()
+    .references(() => courses.id),
+  // The user whose action triggered the notification (e.g. the enrolling student).
+  actorUserId: integer("actor_user_id")
+    .notNull()
+    .references(() => users.id),
+  enrollmentId: integer("enrollment_id")
+    .notNull()
+    // A notification is about an enrollment; if the enrollment is removed
+    // (e.g. unenrollment), its notifications go with it.
+    .references(() => enrollments.id, { onDelete: "cascade" }),
+  // null = unread; set to an ISO timestamp when read.
+  readAt: text("read_at"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),

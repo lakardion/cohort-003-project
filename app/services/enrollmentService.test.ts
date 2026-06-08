@@ -78,6 +78,18 @@ describe("enrollmentService", () => {
       const enrollment = enrollUser(base.user.id, base.course.id, true, false);
       expect(enrollment).toBeDefined();
     });
+
+    it("creates exactly one notification addressed to the course's instructor", () => {
+      const enrollment = enrollUser(base.user.id, base.course.id, false, false);
+
+      const notifications = testDb.select().from(schema.notifications).all();
+
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0].userId).toBe(base.instructor.id);
+      expect(notifications[0].actorUserId).toBe(base.user.id);
+      expect(notifications[0].courseId).toBe(base.course.id);
+      expect(notifications[0].enrollmentId).toBe(enrollment.id);
+    });
   });
 
   describe("unenrollUser", () => {
