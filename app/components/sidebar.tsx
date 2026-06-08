@@ -101,6 +101,12 @@ const navItems: NavItem[] = [
     roles: [UserRole.Admin],
   },
   {
+    label: "Analytics",
+    to: "/admin/analytics",
+    icon: <ChartColumn className="size-4" />,
+    roles: [UserRole.Admin],
+  },
+  {
     label: "Categories",
     to: "/admin/categories",
     icon: <Tag className="size-4" />,
