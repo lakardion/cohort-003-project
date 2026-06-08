@@ -187,6 +187,32 @@ describe("couponService", () => {
       expect(updated!.redeemedAt).toBeDefined();
     });
 
+    it("enrolls the user exactly once and notifies the course's instructor", () => {
+      const { team, purchase } = setupTeamAndPurchase();
+      const [coupon] = generateCoupons(team.id, base.course.id, purchase.id, 1);
+      const redeemer = createRedeemer();
+
+      const result = redeemCoupon(coupon.code, redeemer.id, "US");
+      expect(result.ok).toBe(true);
+
+      // Exactly one enrollment row — no duplicate from the consolidation.
+      const enrollmentRows = testDb
+        .select()
+        .from(schema.enrollments)
+        .all();
+      expect(enrollmentRows).toHaveLength(1);
+
+      // The instructor receives a notification via the shared enrollment seam.
+      const notifications = testDb
+        .select()
+        .from(schema.notifications)
+        .all();
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0].userId).toBe(base.instructor.id);
+      expect(notifications[0].actorUserId).toBe(redeemer.id);
+      expect(notifications[0].courseId).toBe(base.course.id);
+    });
+
     it("rejects redemption of a nonexistent code", () => {
       const result = redeemCoupon("nonexistent-code", 999, "US");
 
