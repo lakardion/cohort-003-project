@@ -1,4 +1,4 @@
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "~/db";
 import { coupons, purchases, enrollments } from "~/db/schema";
 import { enrollUser } from "./enrollmentService";
@@ -50,6 +50,34 @@ export function getCouponsForTeam(teamId: number, courseId?: number) {
       .all();
   }
   return db.select().from(coupons).where(eq(coupons.teamId, teamId)).all();
+}
+
+export interface SeatStats {
+  total: number;
+  claimed: number;
+  remaining: number;
+}
+
+// Live seat utilization for a team+course: total coupons issued, how many have
+// been redeemed, and how many remain. Computed at read time so the figure is
+// always current; no seat count is stored anywhere. Shared by the team page and
+// coupon-redeemed notifications so both surfaces always agree.
+export function getSeatStatsForTeamCourse(
+  teamId: number,
+  courseId: number
+): SeatStats {
+  const result = db
+    .select({
+      total: sql<number>`count(*)`,
+      claimed: sql<number>`count(${coupons.redeemedByUserId})`,
+    })
+    .from(coupons)
+    .where(and(eq(coupons.teamId, teamId), eq(coupons.courseId, courseId)))
+    .get();
+
+  const total = result?.total ?? 0;
+  const claimed = result?.claimed ?? 0;
+  return { total, claimed, remaining: total - claimed };
 }
 
 export type RedeemResult =

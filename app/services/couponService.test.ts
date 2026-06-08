@@ -17,6 +17,7 @@ import {
   generateCoupons,
   getCouponByCode,
   getCouponsForTeam,
+  getSeatStatsForTeamCourse,
   redeemCoupon,
 } from "./couponService";
 import * as notificationService from "./notificationService";
@@ -184,6 +185,75 @@ describe("couponService", () => {
 
       const all = getCouponsForTeam(team.id);
       expect(all).toHaveLength(5);
+    });
+  });
+
+  describe("getSeatStatsForTeamCourse", () => {
+    it("reports all seats remaining when none are redeemed", () => {
+      const { team, purchase } = setupTeamAndPurchase();
+      generateCoupons(team.id, base.course.id, purchase.id, 5);
+
+      const stats = getSeatStatsForTeamCourse(team.id, base.course.id);
+      expect(stats).toEqual({ total: 5, claimed: 0, remaining: 5 });
+    });
+
+    it("reflects partially redeemed seats", () => {
+      const { team, purchase } = setupTeamAndPurchase();
+      const coupons = generateCoupons(team.id, base.course.id, purchase.id, 3);
+      const redeemer = createRedeemer();
+      redeemCoupon(coupons[0].code, redeemer.id, "US");
+
+      const stats = getSeatStatsForTeamCourse(team.id, base.course.id);
+      expect(stats).toEqual({ total: 3, claimed: 1, remaining: 2 });
+    });
+
+    it("reports zero remaining when fully redeemed", () => {
+      const { team, purchase } = setupTeamAndPurchase();
+      const [coupon] = generateCoupons(team.id, base.course.id, purchase.id, 1);
+      const redeemer = createRedeemer();
+      redeemCoupon(coupon.code, redeemer.id, "US");
+
+      const stats = getSeatStatsForTeamCourse(team.id, base.course.id);
+      expect(stats).toEqual({ total: 1, claimed: 1, remaining: 0 });
+    });
+
+    it("scopes the stats to the given team and course", () => {
+      const { team, purchase } = setupTeamAndPurchase();
+      const course2 = testDb
+        .insert(schema.courses)
+        .values({
+          title: "Second Course",
+          slug: "second-course",
+          description: "Another course",
+          instructorId: base.instructor.id,
+          categoryId: base.category.id,
+          status: schema.CourseStatus.Published,
+        })
+        .returning()
+        .get();
+      const purchase2 = testDb
+        .insert(schema.purchases)
+        .values({
+          userId: base.user.id,
+          courseId: course2.id,
+          pricePaid: 5000,
+          country: "US",
+        })
+        .returning()
+        .get();
+      generateCoupons(team.id, base.course.id, purchase.id, 2);
+      generateCoupons(team.id, course2.id, purchase2.id, 4);
+
+      expect(getSeatStatsForTeamCourse(team.id, base.course.id)).toEqual({
+        total: 2,
+        claimed: 0,
+        remaining: 2,
+      });
+      expect(getSeatStatsForTeamCourse(team.id, course2.id)).toEqual({
+        total: 4,
+        claimed: 0,
+        remaining: 4,
+      });
     });
   });
 
