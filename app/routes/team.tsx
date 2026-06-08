@@ -3,7 +3,10 @@ import { Link } from "react-router";
 import type { Route } from "./+types/team";
 import { getCurrentUserId } from "~/lib/session";
 import { getTeamForAdmin } from "~/services/teamService";
-import { getCouponsForTeam } from "~/services/couponService";
+import {
+  getCouponsForTeam,
+  getSeatStatsForTeamCourse,
+} from "~/services/couponService";
 import { getCourseById } from "~/services/courseService";
 import { getUserById } from "~/services/userService";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
@@ -52,45 +55,20 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const allCoupons = getCouponsForTeam(team.id);
 
-  // Build per-course stats
-  const courseMap = new Map<
-    number,
-    {
-      courseId: number;
-      courseTitle: string;
-      courseSlug: string;
-      total: number;
-      claimed: number;
-    }
-  >();
-
-  for (const coupon of allCoupons) {
-    if (!courseMap.has(coupon.courseId)) {
-      const course = getCourseById(coupon.courseId);
-      courseMap.set(coupon.courseId, {
-        courseId: coupon.courseId,
-        courseTitle: course?.title ?? "Unknown Course",
-        courseSlug: course?.slug ?? "",
-        total: 0,
-        claimed: 0,
-      });
-    }
-    const entry = courseMap.get(coupon.courseId)!;
-    entry.total++;
-    if (coupon.redeemedByUserId !== null) {
-      entry.claimed++;
-    }
-  }
-
-  const courseStats: CourseStats[] = Array.from(courseMap.values()).map(
-    (e) => ({
-      courseId: e.courseId,
-      courseTitle: e.courseTitle,
-      courseSlug: e.courseSlug,
-      totalSeats: e.total,
-      claimedSeats: e.claimed,
-    })
-  );
+  // Per-course stats, derived via the shared seats helper so the team page and
+  // coupon-redeemed notifications always agree on seat counts.
+  const courseIds = [...new Set(allCoupons.map((c) => c.courseId))];
+  const courseStats: CourseStats[] = courseIds.map((courseId) => {
+    const course = getCourseById(courseId);
+    const stats = getSeatStatsForTeamCourse(team.id, courseId);
+    return {
+      courseId,
+      courseTitle: course?.title ?? "Unknown Course",
+      courseSlug: course?.slug ?? "",
+      totalSeats: stats.total,
+      claimedSeats: stats.claimed,
+    };
+  });
 
   // Build coupon rows with redeemer email
   const couponRows: CouponRow[] = allCoupons.map((coupon) => {

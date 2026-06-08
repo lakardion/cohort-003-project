@@ -1,6 +1,7 @@
 import { eq, and, isNull, sql, desc } from "drizzle-orm";
 import { db } from "~/db";
 import { notifications, courses, users, NotificationType } from "~/db/schema";
+import { getSeatStatsForTeamCourse } from "./couponService";
 
 // ─── Notification Service ───
 // Durable in-app notifications addressed to a recipient (e.g. a course's
@@ -78,9 +79,11 @@ export function getUnreadCountForUser(userId: number) {
 }
 
 // Recent notifications for a recipient, newest-first, with the display fields
-// the UI needs (enrolling student's name, course title).
+// the UI needs (enrolling student's name, course title). Coupon-redeemed items
+// carry a live `seatsRemaining` computed at read time; enrollment items leave
+// it null.
 export function getNotificationsForUser(userId: number, limit: number) {
-  return db
+  const rows = db
     .select({
       id: notifications.id,
       type: notifications.type,
@@ -88,6 +91,7 @@ export function getNotificationsForUser(userId: number, limit: number) {
       courseTitle: courses.title,
       actorUserId: notifications.actorUserId,
       actorName: users.name,
+      teamId: notifications.teamId,
       readAt: notifications.readAt,
       createdAt: notifications.createdAt,
     })
@@ -98,6 +102,14 @@ export function getNotificationsForUser(userId: number, limit: number) {
     .orderBy(desc(notifications.createdAt), desc(notifications.id))
     .limit(limit)
     .all();
+
+  return rows.map(({ teamId, ...row }) => ({
+    ...row,
+    seatsRemaining:
+      row.type === NotificationType.CouponRedeemed && teamId !== null
+        ? getSeatStatsForTeamCourse(teamId, row.courseId).remaining
+        : null,
+  }));
 }
 
 // Marks a single notification read, scoped to its recipient so a user cannot

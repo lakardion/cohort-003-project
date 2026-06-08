@@ -30,6 +30,51 @@ function createEnrollment(userId: number, courseId: number) {
     .get();
 }
 
+// Seeds a team with `total` coupons for base.course, `claimed` of them redeemed,
+// and returns the team plus a coupon-redeemed notification addressed to the
+// recipient.
+function seedCouponRedemption(opts: {
+  recipientUserId: number;
+  total: number;
+  claimed: number;
+}) {
+  const team = testDb.insert(schema.teams).values({}).returning().get();
+  const purchase = testDb
+    .insert(schema.purchases)
+    .values({
+      userId: base.user.id,
+      courseId: base.course.id,
+      pricePaid: 10000,
+      country: "US",
+    })
+    .returning()
+    .get();
+
+  for (let i = 0; i < opts.total; i++) {
+    testDb
+      .insert(schema.coupons)
+      .values({
+        teamId: team.id,
+        courseId: base.course.id,
+        code: `code-${team.id}-${i}`,
+        purchaseId: purchase.id,
+        redeemedByUserId: i < opts.claimed ? base.user.id : null,
+      })
+      .run();
+  }
+
+  const enrollment = createEnrollment(base.user.id, base.course.id);
+  const notification = notifyCouponRedemption({
+    recipientUserId: opts.recipientUserId,
+    actorUserId: base.user.id,
+    courseId: base.course.id,
+    enrollmentId: enrollment.id,
+    teamId: team.id,
+  });
+
+  return { team, notification };
+}
+
 describe("notificationService", () => {
   beforeEach(() => {
     testDb = createTestDb();
@@ -147,6 +192,64 @@ describe("notificationService", () => {
 
       // The enrolling student is not a recipient.
       expect(getNotificationsForUser(base.user.id, 10)).toHaveLength(0);
+    });
+
+    it("attaches live seatsRemaining to coupon-redeemed items", () => {
+      // 5 seats, 2 claimed -> 3 remaining.
+      seedCouponRedemption({
+        recipientUserId: base.instructor.id,
+        total: 5,
+        claimed: 2,
+      });
+
+      const list = getNotificationsForUser(base.instructor.id, 10);
+
+      expect(list).toHaveLength(1);
+      expect(list[0].type).toBe(schema.NotificationType.CouponRedeemed);
+      expect(list[0].seatsRemaining).toBe(3);
+      expect(list[0].actorName).toBe(base.user.name);
+      expect(list[0].courseTitle).toBe(base.course.title);
+    });
+
+    it("reflects the current seat count even after more redemptions", () => {
+      const { team } = seedCouponRedemption({
+        recipientUserId: base.instructor.id,
+        total: 4,
+        claimed: 1,
+      });
+
+      // A later redemption claims another seat after the notification exists.
+      testDb
+        .update(schema.coupons)
+        .set({ redeemedByUserId: base.user.id })
+        .where(eq(schema.coupons.code, `code-${team.id}-1`))
+        .run();
+
+      const list = getNotificationsForUser(base.instructor.id, 10);
+      expect(list[0].seatsRemaining).toBe(2);
+    });
+
+    it("leaves seatsRemaining null for enrollment notifications", () => {
+      notifyEnrollment(createEnrollment(base.user.id, base.course.id));
+
+      const list = getNotificationsForUser(base.instructor.id, 10);
+      expect(list[0].type).toBe(schema.NotificationType.Enrollment);
+      expect(list[0].seatsRemaining).toBeNull();
+    });
+
+    it("orders a mix of enrollment and coupon-redeemed items newest-first", () => {
+      const enrollment = createEnrollment(base.user.id, base.course.id);
+      const first = notifyEnrollment(enrollment);
+      const { notification: second } = seedCouponRedemption({
+        recipientUserId: base.instructor.id,
+        total: 2,
+        claimed: 1,
+      });
+
+      const list = getNotificationsForUser(base.instructor.id, 10);
+      expect(list).toHaveLength(2);
+      expect(list[0].id).toBe(second!.id);
+      expect(list[1].id).toBe(first!.id);
     });
   });
 
