@@ -1,6 +1,7 @@
 import { eq, and, isNull } from "drizzle-orm";
 import { db } from "~/db";
 import { coupons, purchases, enrollments } from "~/db/schema";
+import { enrollUser } from "./enrollmentService";
 import crypto from "crypto";
 
 // ─── Coupon Service ───
@@ -109,11 +110,10 @@ export function redeemCoupon(
     .where(eq(coupons.id, coupon.id))
     .run();
 
-  const enrollment = db
-    .insert(enrollments)
-    .values({ userId, courseId: coupon.courseId })
-    .returning()
-    .get();
+  // Enroll through the shared seam so the instructor notification fires.
+  // Redemption already validated the coupon, course, and duplicate enrollment
+  // above, so service-level validation is skipped here.
+  const enrollment = enrollUser(userId, coupon.courseId, false, true);
 
   return { ok: true, enrollment };
 }
